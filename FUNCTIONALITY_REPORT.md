@@ -173,7 +173,7 @@ This report describes the prototype as it exists now. It is intentionally practi
 - `deploy/vision.service` provides a systemd unit template.
 - `deploy/install_pi.sh` creates a virtual environment, installs dependencies, prepares folders, and installs the service.
 - `deploy/start_service.sh` enables and restarts the service.
-- Dockerfile and docker-compose are present for runtime-oriented container testing.
+- Raspberry Pi deployment uses the native systemd service installed by 'deploy/install_pi.sh
 - `python -m app.runtime.health_check --mode laptop` checks Python, imports, profile/model paths, writable folders, config values, and simulated source access.
 - `python -m app.runtime.health_check --mode pi` supports Picamera2/Pi Camera 3 readiness with `--camera-backend picamera2`, and USB/OpenCV readiness with `--camera-backend opencv --camera 0`.
 - Recommended Pi runtime defaults are low-resolution and CPU-friendly:

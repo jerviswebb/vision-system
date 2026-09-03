@@ -14,7 +14,7 @@ This report documents the current repository shape and cleanup decisions for the
 - `app/runtime/output_manager.py` and `app/runtime/action_manager.py` - CSV/status JSON output and safe local actions.
 - `cameras/pi_camera3.yaml` and `cameras/usb_webcam.yaml` - camera defaults.
 - `scripts/run_pi_runtime.sh`, `scripts/run_camera_dashboard.sh`, `scripts/pi_validate_runtime.sh` - Pi runtime launch and validation.
-- `deploy/install_pi_runtime.sh` and `requirements-pi-runtime.txt` - Pi-safe dependency workflow.
+- `deploy/install_pi.sh` and `requirements-pi-runtime.txt` - Pi-safe dependency workflow.
 
 ## Essential Desktop/Training Files
 
@@ -46,7 +46,7 @@ These should not be committed:
 - `app/camara.py` appears to be a legacy/typo-named camera helper. It was not removed because it may still be referenced manually.
 - `models/mouse/` contains multiple historical `.pt` versions. They are not part of the `yellow_daifuku` Pi workflow and may be candidates for manual archival.
 - `models/yolov8n.pt` is a generic base model. Keep it only if still used for training/bootstrap.
-- `ansible/`, `Dockerfile`, `docker-compose.yml`, and `hardware/` are deployment/hardware experiments and are not required for the current Pi Camera 3 MVP path.
+- `hardware/` contains optional hardware experiments and is not required for the current Pi Camera 3 MVP path.
 - `docs/New Text Document.txt` looks like an accidental placeholder, but was left untouched.
 
 ## Model Artifact Notes

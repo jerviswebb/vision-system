@@ -36,7 +36,7 @@ The venv must be created with:
 From the repository root on the Pi:
 
 ```bash
-deploy/install_pi_runtime.sh
+deploy/install_pi.sh
 ```
 
 The installer:

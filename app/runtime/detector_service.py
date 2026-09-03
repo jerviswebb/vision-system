@@ -14,45 +14,53 @@ from flask import Flask, Response, jsonify
 from app.config import (
     ACTIVE_MODEL_PROFILE,
     CAMERA_INDEX,
+    DATA_DIR,
     DEFAULT_CONFIDENCE,
     LOW_CONFIDENCE_THRESHOLD,
     MODELS_DIR,
     PROJECT_ROOT,
     REVIEW_IMAGES_DIR,
-    DATA_DIR,
     ROI_ENABLED,
     ROI_X1,
     ROI_X2,
     ROI_Y1,
     ROI_Y2,
 )
+from app.runtime.action_manager import ActionManager
 from app.runtime.camera_manager import CameraManager
 from app.runtime.camera_profile import CameraProfileError, load_camera_profile
 from app.runtime.camera_sources import SimulatedCameraSource
-from app.runtime.inference_engine import (
-    InferenceEngine,
-    MODEL_FORMAT_AUTO,
-    MODEL_FORMAT_NCNN,
-    MODEL_FORMAT_PT,
-    resolve_runtime_input_size,
-    resolve_model_path,
-)
+from app.runtime.event_manager import DuplicateSuppressor, EventManager, EventSeverity
+from app.runtime.health_monitor import HealthMonitor
 from app.runtime.image_quality import (
     GOOD as IMAGE_QUALITY_GOOD,
+)
+from app.runtime.image_quality import (
     QUALITY_CHECK_ERROR,
     compute_image_quality,
     quality_thresholds_from_config,
 )
+from app.runtime.inference_engine import (
+    MODEL_FORMAT_AUTO,
+    MODEL_FORMAT_NCNN,
+    MODEL_FORMAT_PT,
+    InferenceEngine,
+    resolve_model_path,
+    resolve_runtime_input_size,
+)
 from app.runtime.inspection_logic import InspectionLogic, normalize_class_name
-from app.runtime.preprocessing import apply_camera_transforms, apply_roi, standardize_frame
-from app.runtime.action_manager import ActionManager
-from app.runtime.event_manager import DuplicateSuppressor, EventSeverity, EventManager
-from app.runtime.health_monitor import HealthMonitor
-from app.runtime.inspection_result import canonical_state_from_result, generate_inspection_id
+from app.runtime.inspection_result import (
+    canonical_state_from_result,
+    generate_inspection_id,
+)
 from app.runtime.notification_manager import NotificationManager
 from app.runtime.output_manager import OutputManager
 from app.runtime.picamera2_manager import Picamera2CameraManager
-
+from app.runtime.preprocessing import (
+    apply_camera_transforms,
+    apply_roi,
+    standardize_frame,
+)
 
 BOX_COLORS = {
     "target": (24, 178, 107),
@@ -751,9 +759,14 @@ class RuntimeDetectorService:
         self.camera_profile_name = str(camera_profile or "")
         self.camera_profile = self._load_camera_profile(camera_profile)
         self.camera_profile_error = ""
-        profile_backend = self.camera_profile.backend if self.camera_profile else CAMERA_BACKEND_AUTO
+        profile_backend = (
+            self.camera_profile.backend if self.camera_profile else CAMERA_BACKEND_AUTO
+        )
         requested_backend = camera_backend or CAMERA_BACKEND_AUTO
-        if requested_backend == CAMERA_BACKEND_AUTO and profile_backend != CAMERA_BACKEND_AUTO:
+        if (
+            requested_backend == CAMERA_BACKEND_AUTO
+            and profile_backend != CAMERA_BACKEND_AUTO
+        ):
             requested_backend = profile_backend
         self.camera_backend_requested = requested_backend
         self.camera_only = bool(camera_only)
@@ -817,6 +830,13 @@ class RuntimeDetectorService:
             detection_required_frames=detection_required_frames,
             miss_required_frames=miss_required_frames,
         )
+        self.effective_roi = {
+            "enabled": self.inspection_rules["roi_enabled"],
+            "x1": self.inspection_rules["roi_x1"],
+            "y1": self.inspection_rules["roi_y1"],
+            "x2": self.inspection_rules["roi_x2"],
+            "y2": self.inspection_rules["roi_y2"],
+        }
         self.model_input_resolution = resolve_runtime_input_size(
             self.model_path,
             requested_imgsz=imgsz,
@@ -833,11 +853,25 @@ class RuntimeDetectorService:
             )
         self.frame_width = max(
             1,
-            int(frame_width or (self.camera_profile.width if self.camera_profile else DEFAULT_FRAME_WIDTH)),
+            int(
+                frame_width
+                or (
+                    self.camera_profile.width
+                    if self.camera_profile
+                    else DEFAULT_FRAME_WIDTH
+                )
+            ),
         )
         self.frame_height = max(
             1,
-            int(frame_height or (self.camera_profile.height if self.camera_profile else DEFAULT_FRAME_HEIGHT)),
+            int(
+                frame_height
+                or (
+                    self.camera_profile.height
+                    if self.camera_profile
+                    else DEFAULT_FRAME_HEIGHT
+                )
+            ),
         )
         self.inference_interval_ms = max(0, int(inference_interval_ms))
         self.snapshot_interval_ms = max(0, int(snapshot_interval_ms))
@@ -847,8 +881,12 @@ class RuntimeDetectorService:
         self.debug_frame_limit = max(0, int(debug_frame_limit))
         self.debug_frame_count = 0
         self.debug_capture_on_detection = bool(debug_capture_on_detection)
-        debug_root = Path(debug_dir) if debug_dir else DEBUG_FRAMES_DIR / "live_detections"
-        self.debug_dir = debug_root if debug_root.is_absolute() else PROJECT_ROOT / debug_root
+        debug_root = (
+            Path(debug_dir) if debug_dir else DEBUG_FRAMES_DIR / "live_detections"
+        )
+        self.debug_dir = (
+            debug_root if debug_root.is_absolute() else PROJECT_ROOT / debug_root
+        )
         self.debug_max_captures = max(0, int(debug_max_captures))
         self.debug_capture_count = 0
         self.inference_interval_seconds = max(0.0, self.inference_interval_ms / 1000)
@@ -876,10 +914,13 @@ class RuntimeDetectorService:
             except Exception as exc:
                 self.model_status = MODEL_STATUS_ERROR
                 self.model_error = str(exc)
-        self.camera = self._create_camera(camera_index, camera_source, self.camera_backend_requested)
+        self.camera = self._create_camera(
+            camera_index, camera_source, self.camera_backend_requested
+        )
+        inspection_rules = {**self.inspection_rules, "roi_enabled": False}
         self.inspection = InspectionLogic(
             target_classes=self.target_classes,
-            **self.inspection_rules,
+            **inspection_rules,
         )
         self.output_manager = OutputManager()
         self.action_manager = ActionManager(self.profile_config.get("actions") or {})
@@ -890,7 +931,9 @@ class RuntimeDetectorService:
         self.repeated_failure_suppressor = DuplicateSuppressor(
             cooldown_seconds=float(notification_rules.get("cooldown_seconds", 60.0)),
             repeat_threshold=int(notification_rules.get("failure_repeat_threshold", 3)),
-            repeat_window_seconds=float(notification_rules.get("failure_window_seconds", 300.0)),
+            repeat_window_seconds=float(
+                notification_rules.get("failure_window_seconds", 300.0)
+            ),
         )
         self.evidence_config = self.profile_config.get("evidence") or {}
         self.last_structured_event_identity = None
@@ -952,7 +995,9 @@ class RuntimeDetectorService:
         self.running = True
         self.started_at = datetime.now().isoformat(timespec="seconds")
         self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
-        self.inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
+        self.inference_thread = threading.Thread(
+            target=self._inference_loop, daemon=True
+        )
         self.camera_thread.start()
         self.inference_thread.start()
 
@@ -1013,9 +1058,13 @@ class RuntimeDetectorService:
             "model_status": self.model_status,
             "camera_source": self.camera_source,
             "camera_profile": self.camera_profile_name,
-            "camera_profile_config": self.camera_profile.to_dict() if self.camera_profile else None,
+            "camera_profile_config": self.camera_profile.to_dict()
+            if self.camera_profile
+            else None,
             "camera_backend_requested": self.camera_backend_requested,
-            "camera_backend": getattr(self.camera, "backend", self.camera_backend_requested),
+            "camera_backend": getattr(
+                self.camera, "backend", self.camera_backend_requested
+            ),
             "camera_only": self.camera_only,
             "disable_inference": self.disable_inference,
             "inference_disabled": self.inference_disabled,
@@ -1044,7 +1093,9 @@ class RuntimeDetectorService:
             "quality_thresholds": self.quality_thresholds,
             "skip_inference_on_bad_quality": self.skip_inference_on_bad_quality,
             "preprocessing": (
-                self.camera_profile.to_dict().get("preprocessing") if self.camera_profile else None
+                self.camera_profile.to_dict().get("preprocessing")
+                if self.camera_profile
+                else None
             ),
             "inspection_rules": self.inspection_rules,
         }
@@ -1063,13 +1114,19 @@ class RuntimeDetectorService:
             self.output_manager.log_fault(
                 self.profile_name,
                 "camera_error",
-                getattr(self.camera, "last_error", "") or f"Camera status is {self.camera.status}.",
-                {"camera_status": self.camera.status, "camera_source": self.camera_source},
+                getattr(self.camera, "last_error", "")
+                or f"Camera status is {self.camera.status}.",
+                {
+                    "camera_status": self.camera.status,
+                    "camera_source": self.camera_source,
+                },
                 cooldown_seconds=0,
             )
 
     def _camera_connected(self):
-        return bool(getattr(self.camera, "connected", self.camera.status == "Connected"))
+        return bool(
+            getattr(self.camera, "connected", self.camera.status == "Connected")
+        )
 
     def _counter_snapshot(self):
         action_counters = getattr(self.action_manager, "counters", {})
@@ -1095,19 +1152,23 @@ class RuntimeDetectorService:
         with self.lock:
             latest = dict(self.latest_detection)
             camera_connected = self._camera_connected()
-            camera_backend = getattr(self.camera, "backend", self.camera_backend_requested)
+            camera_backend = getattr(
+                self.camera, "backend", self.camera_backend_requested
+            )
             camera_status = (
-                self.camera.get_status()
-                if hasattr(self.camera, "get_status")
-                else {}
+                self.camera.get_status() if hasattr(self.camera, "get_status") else {}
             )
             camera_fps = camera_status.get("fps", self.camera_fps)
             model_loaded = self.model_status == MODEL_STATUS_LOADED
             counters = self._counter_snapshot()
-            output_payload = latest.get("output_payload") or getattr(self.output_manager, "last_payload", {})
+            output_payload = latest.get("output_payload") or getattr(
+                self.output_manager, "last_payload", {}
+            )
             image_quality = dict(self.latest_image_quality)
             preprocessing = dict(self.latest_preprocessing)
-            camera_profile_payload = self.camera_profile.to_dict() if self.camera_profile else None
+            camera_profile_payload = (
+                self.camera_profile.to_dict() if self.camera_profile else None
+            )
             notification_status = self.notification_manager.status()
             health = self.health_monitor.snapshot(
                 camera_connected=camera_connected,
@@ -1213,7 +1274,9 @@ class RuntimeDetectorService:
                     "width": self.frame_width,
                     "height": self.frame_height,
                     "fps": camera_fps,
-                    "error": camera_status.get("error") or getattr(self.camera, "last_error", "") or None,
+                    "error": camera_status.get("error")
+                    or getattr(self.camera, "last_error", "")
+                    or None,
                     "last_frame_time": camera_status.get(
                         "last_frame_time",
                         getattr(self.camera, "last_frame_time", None),
@@ -1221,15 +1284,25 @@ class RuntimeDetectorService:
                 },
                 "camera_profile_details": {
                     "name": self.camera_profile.name if self.camera_profile else None,
-                    "backend": self.camera_profile.backend if self.camera_profile else camera_backend,
-                    "width": self.camera_profile.width if self.camera_profile else self.frame_width,
-                    "height": self.camera_profile.height if self.camera_profile else self.frame_height,
+                    "backend": self.camera_profile.backend
+                    if self.camera_profile
+                    else camera_backend,
+                    "width": self.camera_profile.width
+                    if self.camera_profile
+                    else self.frame_width,
+                    "height": self.camera_profile.height
+                    if self.camera_profile
+                    else self.frame_height,
                     "fps": self.camera_profile.fps if self.camera_profile else None,
                     "quality": (
-                        camera_profile_payload.get("quality") if camera_profile_payload else None
+                        camera_profile_payload.get("quality")
+                        if camera_profile_payload
+                        else None
                     ),
                     "preprocessing": (
-                        camera_profile_payload.get("preprocessing") if camera_profile_payload else None
+                        camera_profile_payload.get("preprocessing")
+                        if camera_profile_payload
+                        else None
                     ),
                 },
                 "model": {
@@ -1253,11 +1326,14 @@ class RuntimeDetectorService:
                 "inspection": {
                     "inspection_id": latest.get("inspection_id"),
                     "state": latest.get("inspection_state")
-                    or canonical_state_from_result(latest.get("inspection_result")).value,
+                    or canonical_state_from_result(
+                        latest.get("inspection_result")
+                    ).value,
                     "legacy_result": latest.get("inspection_result"),
                     "result": latest.get("inspection_result"),
                     "message": latest.get("result_message"),
-                    "active_class": latest.get("active_class") or latest.get("class_name"),
+                    "active_class": latest.get("active_class")
+                    or latest.get("class_name"),
                     "confidence": latest.get("confidence"),
                     "average_confidence": latest.get("average_confidence"),
                     "agreement_ratio": latest.get("agreement_ratio"),
@@ -1330,10 +1406,14 @@ class RuntimeDetectorService:
                         self.output_manager.log_fault(
                             self.profile_name,
                             "camera_error",
-                            detection.get("result_message", "Camera frame unavailable."),
+                            detection.get(
+                                "result_message", "Camera frame unavailable."
+                            ),
                             {
                                 "camera_status": self.camera.status,
-                                "camera_last_error": getattr(self.camera, "last_error", ""),
+                                "camera_last_error": getattr(
+                                    self.camera, "last_error", ""
+                                ),
                             },
                         )
                 time.sleep(0.02)
@@ -1346,12 +1426,16 @@ class RuntimeDetectorService:
             try:
                 self._mark_inference_started()
                 inference_started = time.perf_counter()
-                processed_frame, preprocessing_metadata, image_quality = self._prepare_runtime_frame(frame)
+                processed_frame, preprocessing_metadata, image_quality = (
+                    self._prepare_runtime_frame(frame)
+                )
                 if self.inference_disabled:
                     detections = []
                     detection = self._disabled_inference_detection()
                     inference_ms = 0.0
-                    detection = self._attach_frame_metadata(detection, image_quality, preprocessing_metadata)
+                    detection = self._attach_frame_metadata(
+                        detection, image_quality, preprocessing_metadata
+                    )
                     self._maybe_update_snapshot(processed_frame, detections, detection)
                     self._update_runtime_timing(inference_ms)
                     output_payload = self.output_manager.handle_detection(
@@ -1370,7 +1454,9 @@ class RuntimeDetectorService:
                     detections = []
                     inference_ms = (time.perf_counter() - inference_started) * 1000
                     detection = self._image_quality_error_detection(image_quality)
-                    detection = self._attach_frame_metadata(detection, image_quality, preprocessing_metadata)
+                    detection = self._attach_frame_metadata(
+                        detection, image_quality, preprocessing_metadata
+                    )
                     self._maybe_update_snapshot(processed_frame, detections, detection)
                     self._update_runtime_timing(inference_ms)
                     output_payload = self.output_manager.handle_detection(
@@ -1393,7 +1479,10 @@ class RuntimeDetectorService:
                         self.profile_name,
                         "model_error",
                         self.model_error or "Runtime model is not available.",
-                        {"model_path": str(self.model_path), "model_status": self.model_status},
+                        {
+                            "model_path": str(self.model_path),
+                            "model_status": self.model_status,
+                        },
                     )
                 else:
                     results = self.model.predict(
@@ -1410,8 +1499,12 @@ class RuntimeDetectorService:
                     model_status=self.model_status,
                     simulation_mode=self.simulation_mode,
                 )
-                detection = self._attach_frame_metadata(detection, image_quality, preprocessing_metadata)
-                detection = self._handle_review_images(processed_frame, detection, detections)
+                detection = self._attach_frame_metadata(
+                    detection, image_quality, preprocessing_metadata
+                )
+                detection = self._handle_review_images(
+                    processed_frame, detection, detections
+                )
                 self._maybe_capture_detection_debug(
                     raw_frame=frame,
                     inference_frame=processed_frame,
@@ -1424,6 +1517,7 @@ class RuntimeDetectorService:
                 self._maybe_update_snapshot(processed_frame, detections, detection)
                 self._update_runtime_timing(inference_ms)
                 self.last_error = ""
+                self.health_monitor.last_system_error = ""
                 output_payload = self.output_manager.handle_detection(
                     active_profile=self.profile_name,
                     detection=detection,
@@ -1436,12 +1530,35 @@ class RuntimeDetectorService:
                 self._update_latest(detection, output_payload)
             except Exception as exc:
                 self.last_error = str(exc)
-                self._update_latest(self.inspection.snapshot())
+                self.health_monitor.last_system_error = (
+                    f"Runtime inference failed: {exc}"
+                )
+                detection = self.inspection.system_error(
+                    self.health_monitor.last_system_error
+                )
+                detection = self._attach_frame_metadata(
+                    detection,
+                    self.latest_image_quality,
+                    self.latest_preprocessing,
+                )
+                output_payload = self.output_manager.handle_detection(
+                    active_profile=self.profile_name,
+                    detection=detection,
+                    camera_status=self.camera_status,
+                    model_status=self.model_status,
+                    simulation_mode=self.simulation_mode,
+                )
+                action_result = self._handle_actions(detection, output_payload)
+                output_payload["action_result"] = action_result
+                self._update_latest(detection, output_payload)
                 self.output_manager.log_fault(
                     self.profile_name,
                     "runtime_exception",
                     str(exc),
-                    {"model_status": self.model_status, "camera_status": self.camera.status},
+                    {
+                        "model_status": self.model_status,
+                        "camera_status": self.camera.status,
+                    },
                 )
                 time.sleep(0.1)
 
@@ -1454,17 +1571,19 @@ class RuntimeDetectorService:
     def _inference_due(self):
         if self.inference_interval_seconds <= 0:
             return True
-        return time.monotonic() - self.last_inference_run_time >= self.inference_interval_seconds
+        return (
+            time.monotonic() - self.last_inference_run_time
+            >= self.inference_interval_seconds
+        )
 
     def _mark_inference_started(self):
         self.last_inference_run_time = time.monotonic()
 
     def _prepare_runtime_frame(self, frame):
-        transformed_frame, transform_meta = apply_camera_transforms(frame, self.camera_profile)
-        roi_frame, roi_meta = apply_roi(
-            transformed_frame,
-            getattr(self.camera_profile, "roi", None),
+        transformed_frame, transform_meta = apply_camera_transforms(
+            frame, self.camera_profile
         )
+        roi_frame, roi_meta = apply_roi(transformed_frame, self.effective_roi)
         image_quality = self._compute_quality(roi_frame)
         preprocessing = getattr(self.camera_profile, "preprocessing", None)
         preprocessing_enabled = bool(getattr(preprocessing, "enabled", True))
@@ -1535,40 +1654,15 @@ class RuntimeDetectorService:
 
     def _image_quality_error_detection(self, image_quality):
         status = (image_quality or {}).get("quality_status") or QUALITY_CHECK_ERROR
-        message = (image_quality or {}).get("message") or f"Image quality status is {status}."
+        message = (image_quality or {}).get(
+            "message"
+        ) or f"Image quality status is {status}."
         result = (
             QUALITY_CHECK_ERROR
             if status == QUALITY_CHECK_ERROR
             else INSPECTION_RESULT_IMAGE_QUALITY_ERROR
         )
-        return {
-            "inspection_result": result,
-            "inspection_id": generate_inspection_id(),
-            "inspection_state": canonical_state_from_result(result).value,
-            "pass_fail_bool": False,
-            "result_message": message,
-            "stable_detected": False,
-            "raw_detected": False,
-            "class_name": None,
-            "active_class": None,
-            "confidence": None,
-            "stable_detection_count": 0,
-            "detection_frame_count": 0,
-            "miss_frame_count": 0,
-            "target_classes": sorted(self.target_classes),
-            "acceptable_classes": sorted(self.inspection.acceptable_classes),
-            "reject_classes": sorted(self.inspection.reject_classes),
-            "minimum_confidence": self.inspection.minimum_confidence,
-            "allow_simulation": self.inspection.allow_simulation,
-            "roi_enabled": self.inspection.roi_enabled,
-            "roi": {
-                "x1": self.inspection.roi_x1,
-                "y1": self.inspection.roi_y1,
-                "x2": self.inspection.roi_x2,
-                "y2": self.inspection.roi_y2,
-            },
-            "saved_image_path": "",
-        }
+        return self.inspection.system_result(result, False, message)
 
     @staticmethod
     def _attach_frame_metadata(detection, image_quality, preprocessing_metadata):
@@ -1595,7 +1689,8 @@ class RuntimeDetectorService:
     def _build_latest_status_document(self, detection, output_payload):
         camera_backend = getattr(self.camera, "backend", self.camera_backend_requested)
         return {
-            "timestamp": output_payload.get("timestamp") or datetime.now().isoformat(timespec="seconds"),
+            "timestamp": output_payload.get("timestamp")
+            or datetime.now().isoformat(timespec="seconds"),
             "profile": self.profile_name,
             "runtime_mode": self.runtime_mode,
             "simulation_mode": self.simulation_mode,
@@ -1615,7 +1710,8 @@ class RuntimeDetectorService:
             "inspection_state": detection.get("inspection_state")
             or canonical_state_from_result(detection.get("inspection_result")).value,
             "pass_fail_bool": detection.get("pass_fail_bool"),
-            "active_class": detection.get("active_class") or detection.get("class_name"),
+            "active_class": detection.get("active_class")
+            or detection.get("class_name"),
             "confidence": detection.get("confidence"),
             "message": detection.get("result_message", ""),
             "saved_image_path": detection.get("saved_image_path") or None,
@@ -1623,8 +1719,10 @@ class RuntimeDetectorService:
             "inference_ms": self.last_inference_ms,
             "inference_fps": self.inference_fps,
             "camera_fps": self.camera_fps,
-            "image_quality": detection.get("image_quality") or self.latest_image_quality,
-            "preprocessing": detection.get("preprocessing") or self.latest_preprocessing,
+            "image_quality": detection.get("image_quality")
+            or self.latest_image_quality,
+            "preprocessing": detection.get("preprocessing")
+            or self.latest_preprocessing,
             "output_payload": output_payload,
         }
 
@@ -1697,7 +1795,9 @@ class RuntimeDetectorService:
             "model_warning": self.model_warning,
             "camera_source": self.camera_source,
             "camera_profile": self.camera_profile_name,
-            "camera_backend": getattr(self.camera, "backend", self.camera_backend_requested),
+            "camera_backend": getattr(
+                self.camera, "backend", self.camera_backend_requested
+            ),
             "camera_connected": self._camera_connected(),
             "camera_only": self.camera_only,
             "disable_inference": self.disable_inference,
@@ -1708,8 +1808,10 @@ class RuntimeDetectorService:
             "camera_status": self.camera.status,
             "saved_image_path": detection.get("saved_image_path", ""),
             "event_id": (output_payload or {}).get("event_id"),
-            "image_quality": detection.get("image_quality") or dict(self.latest_image_quality),
-            "preprocessing": detection.get("preprocessing") or dict(self.latest_preprocessing),
+            "image_quality": detection.get("image_quality")
+            or dict(self.latest_image_quality),
+            "preprocessing": detection.get("preprocessing")
+            or dict(self.latest_preprocessing),
         }
         latest["output_payload"] = output_payload or OutputManager.build_output_payload(
             active_profile=self.profile_name,
@@ -1731,7 +1833,9 @@ class RuntimeDetectorService:
                 if elapsed > 0:
                     instant_fps = 1.0 / elapsed
                     if self.camera_fps > 0:
-                        self.camera_fps = (self.camera_fps * 0.85) + (instant_fps * 0.15)
+                        self.camera_fps = (self.camera_fps * 0.85) + (
+                            instant_fps * 0.15
+                        )
                     else:
                         self.camera_fps = instant_fps
 
@@ -1747,7 +1851,9 @@ class RuntimeDetectorService:
                 if elapsed > 0:
                     instant_fps = 1.0 / elapsed
                     if self.inference_fps > 0:
-                        self.inference_fps = (self.inference_fps * 0.85) + (instant_fps * 0.15)
+                        self.inference_fps = (self.inference_fps * 0.85) + (
+                            instant_fps * 0.15
+                        )
                     else:
                         self.inference_fps = instant_fps
 
@@ -1791,7 +1897,11 @@ class RuntimeDetectorService:
             not detection.get("raw_detected")
             and detection.get("inspection_result", "NO_PART") == "NO_PART"
         ):
-            saved_paths.append(self._save_review_image(frame, "no_detection", detection, raw_detections))
+            saved_paths.append(
+                self._save_review_image(
+                    frame, "no_detection", detection, raw_detections
+                )
+            )
 
         evidence_path = self._save_inspection_evidence(frame, detection, raw_detections)
         if evidence_path:
@@ -1885,7 +1995,9 @@ class RuntimeDetectorService:
             return None
 
         timestamp = datetime.now()
-        inspection_id = detection.get("inspection_id") or timestamp.strftime("INS-%Y%m%d-%H%M%S")
+        inspection_id = detection.get("inspection_id") or timestamp.strftime(
+            "INS-%Y%m%d-%H%M%S"
+        )
         output_dir = INSPECTIONS_DIR / timestamp.strftime("%Y-%m-%d") / category
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{self._safe_filename_part(inspection_id)}.jpg"
@@ -1953,7 +2065,10 @@ class RuntimeDetectorService:
                     detection=detection,
                     raw_detections=detections,
                 )
-            if cv2.imwrite(str(annotated_output), self._annotate_frame(frame, detections, detection)):
+            if cv2.imwrite(
+                str(annotated_output),
+                self._annotate_frame(frame, detections, detection),
+            ):
                 annotated_path = str(annotated_output)
                 self._write_image_sidecar(
                     annotated_output,
@@ -1983,7 +2098,8 @@ class RuntimeDetectorService:
                 "accepted_classes": sorted(self.inspection.acceptable_classes),
                 "reject_classes": sorted(self.inspection.reject_classes),
                 "target_classes": sorted(self.target_classes),
-                "active_class": detection.get("active_class") or detection.get("class_name"),
+                "active_class": detection.get("active_class")
+                or detection.get("class_name"),
                 "message": detection.get("result_message", ""),
             }
             debug_log = DEBUG_FRAMES_DIR / "detections_debug.jsonl"
@@ -2001,7 +2117,10 @@ class RuntimeDetectorService:
     ):
         if not self.debug_capture_on_detection or not detection.get("raw_detected"):
             return None
-        if self.debug_max_captures and self.debug_capture_count >= self.debug_max_captures:
+        if (
+            self.debug_max_captures
+            and self.debug_capture_count >= self.debug_max_captures
+        ):
             return None
 
         capture_number = self.debug_capture_count + 1
@@ -2017,7 +2136,9 @@ class RuntimeDetectorService:
             if not cv2.imwrite(str(raw_path), raw_frame):
                 raise RuntimeError(f"Could not encode raw camera frame: {raw_path}")
             if not cv2.imwrite(str(inference_path), inference_frame):
-                raise RuntimeError(f"Could not encode inference input: {inference_path}")
+                raise RuntimeError(
+                    f"Could not encode inference input: {inference_path}"
+                )
 
             import numpy as np
 
@@ -2115,7 +2236,9 @@ class RuntimeDetectorService:
             },
         }
 
-    def _write_image_sidecar(self, image_path, category, detection=None, raw_detections=None):
+    def _write_image_sidecar(
+        self, image_path, category, detection=None, raw_detections=None
+    ):
         detection = detection or {}
         image_quality = detection.get("image_quality") or self.latest_image_quality
         preprocessing = detection.get("preprocessing") or self.latest_preprocessing
@@ -2145,8 +2268,12 @@ class RuntimeDetectorService:
                 if isinstance(preprocessing, dict)
                 else None
             ),
-            "frame_width": image_quality.get("width") if isinstance(image_quality, dict) else None,
-            "frame_height": image_quality.get("height") if isinstance(image_quality, dict) else None,
+            "frame_width": image_quality.get("width")
+            if isinstance(image_quality, dict)
+            else None,
+            "frame_height": image_quality.get("height")
+            if isinstance(image_quality, dict)
+            else None,
             "saved_image_category": category,
             "image_path": str(image_path),
         }
@@ -2161,7 +2288,10 @@ class RuntimeDetectorService:
     @staticmethod
     def _json_safe(value):
         if isinstance(value, dict):
-            return {key: RuntimeDetectorService._json_safe(item) for key, item in value.items()}
+            return {
+                key: RuntimeDetectorService._json_safe(item)
+                for key, item in value.items()
+            }
         if isinstance(value, (list, tuple)):
             return [RuntimeDetectorService._json_safe(item) for item in value]
         if hasattr(value, "item"):
@@ -2268,7 +2398,9 @@ class RuntimeDetectorService:
                 "model_warning": self.model_warning,
                 "camera_source": self.camera_source,
                 "camera_profile": self.camera_profile_name,
-                "camera_backend": getattr(self.camera, "backend", self.camera_backend_requested),
+                "camera_backend": getattr(
+                    self.camera, "backend", self.camera_backend_requested
+                ),
                 "camera_connected": self._camera_connected(),
                 "camera_only": self.camera_only,
                 "disable_inference": self.disable_inference,
@@ -2299,34 +2431,7 @@ class RuntimeDetectorService:
             result = INSPECTION_RESULT_INFERENCE_DISABLED
             message = "Inference disabled."
 
-        return {
-            "inspection_result": result,
-            "inspection_id": generate_inspection_id(),
-            "inspection_state": canonical_state_from_result(result).value,
-            "pass_fail_bool": None,
-            "result_message": message,
-            "stable_detected": False,
-            "raw_detected": False,
-            "class_name": None,
-            "active_class": None,
-            "confidence": None,
-            "stable_detection_count": 0,
-            "detection_frame_count": 0,
-            "miss_frame_count": 0,
-            "target_classes": sorted(self.target_classes),
-            "acceptable_classes": sorted(self.inspection.acceptable_classes),
-            "reject_classes": sorted(self.inspection.reject_classes),
-            "minimum_confidence": self.inspection.minimum_confidence,
-            "allow_simulation": self.inspection.allow_simulation,
-            "roi_enabled": self.inspection.roi_enabled,
-            "roi": {
-                "x1": self.inspection.roi_x1,
-                "y1": self.inspection.roi_y1,
-                "x2": self.inspection.roi_x2,
-                "y2": self.inspection.roi_y2,
-            },
-            "saved_image_path": "",
-        }
+        return self.inspection.system_result(result, None, message)
 
     def _fake_detections(self, frame):
         self.dry_run_inference_count += 1
@@ -2342,11 +2447,17 @@ class RuntimeDetectorService:
         y1 = max(0, center_y - box_height // 2)
         x2 = min(width - 1, center_x + box_width // 2)
         y2 = min(height - 1, center_y + box_height // 2)
-        class_name = sorted(self.target_classes)[0] if self.target_classes else "simulated_object"
+        class_name = (
+            sorted(self.target_classes)[0]
+            if self.target_classes
+            else "simulated_object"
+        )
 
         return [
             {
-                "class_id": self.classes.index(class_name) if class_name in self.classes else 0,
+                "class_id": self.classes.index(class_name)
+                if class_name in self.classes
+                else 0,
                 "class_name": class_name,
                 "confidence": 0.55,
                 "bbox": [x1, y1, x2, y2],
@@ -2374,7 +2485,11 @@ class RuntimeDetectorService:
             confidence = item.get("confidence")
             is_target = normalize_class_name(class_name) in self.target_classes
             color = BOX_COLORS["target"] if is_target else BOX_COLORS["other"]
-            label = f"{class_name} {confidence:.2f}" if confidence is not None else class_name
+            label = (
+                f"{class_name} {confidence:.2f}"
+                if confidence is not None
+                else class_name
+            )
 
             cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
             self._draw_label(output, label, x1, y1, color)
@@ -2383,8 +2498,12 @@ class RuntimeDetectorService:
             "Detected" if detection.get("stable_detected") else "Not Detected"
         )
         raw = "Raw: Yes" if detection.get("raw_detected") else "Raw: No"
-        cv2.putText(output, status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-        cv2.putText(output, raw, (12, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(
+            output, status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2
+        )
+        cv2.putText(
+            output, raw, (12, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2
+        )
 
         return output
 
@@ -2403,7 +2522,9 @@ class RuntimeDetectorService:
         font = cv2.FONT_HERSHEY_SIMPLEX
         scale = 0.6
         thickness = 2
-        (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
+        (text_width, text_height), baseline = cv2.getTextSize(
+            label, font, scale, thickness
+        )
         top = max(0, y - text_height - baseline - 8)
         bottom = top + text_height + baseline + 8
         right = min(frame.shape[1] - 1, x + text_width + 10)
@@ -2421,7 +2542,9 @@ class RuntimeDetectorService:
 
     def _load_target_classes(self):
         target_classes = self.profile_config.get("target_classes") or self.classes
-        return {normalize_class_name(name) for name in target_classes if str(name).strip()}
+        return {
+            normalize_class_name(name) for name in target_classes if str(name).strip()
+        }
 
     @staticmethod
     def _load_camera_profile(camera_profile):
@@ -2433,7 +2556,9 @@ class RuntimeDetectorService:
         except CameraProfileError:
             raise
         except Exception as exc:
-            raise CameraProfileError(f"Could not load camera profile '{camera_profile}': {exc}") from exc
+            raise CameraProfileError(
+                f"Could not load camera profile '{camera_profile}': {exc}"
+            ) from exc
 
     def _load_confidence(self, override):
         if override is not None:
@@ -2495,7 +2620,9 @@ class RuntimeDetectorService:
             return {
                 "acceptable_classes": self._as_list(acceptable_classes),
                 "reject_classes": self._as_list(reject_classes),
-                "minimum_confidence": self._as_float(minimum_confidence, "minimum_confidence"),
+                "minimum_confidence": self._as_float(
+                    minimum_confidence, "minimum_confidence"
+                ),
                 "detection_required_frames": self._as_positive_int(
                     required_frames,
                     "required_consecutive_detections",
@@ -2509,40 +2636,58 @@ class RuntimeDetectorService:
                         "enabled",
                         roi_config.get(
                             "roi_enabled",
-                            camera_roi.enabled if camera_roi is not None else ROI_ENABLED,
+                            camera_roi.enabled
+                            if camera_roi is not None
+                            else ROI_ENABLED,
                         ),
                     )
                 ),
                 "roi_x1": self._as_float(
                     roi_config.get(
                         "x1",
-                        roi_config.get("roi_x1", camera_roi.x1 if camera_roi is not None else ROI_X1),
+                        roi_config.get(
+                            "roi_x1",
+                            camera_roi.x1 if camera_roi is not None else ROI_X1,
+                        ),
                     ),
                     "roi.x1",
                 ),
                 "roi_y1": self._as_float(
                     roi_config.get(
                         "y1",
-                        roi_config.get("roi_y1", camera_roi.y1 if camera_roi is not None else ROI_Y1),
+                        roi_config.get(
+                            "roi_y1",
+                            camera_roi.y1 if camera_roi is not None else ROI_Y1,
+                        ),
                     ),
                     "roi.y1",
                 ),
                 "roi_x2": self._as_float(
                     roi_config.get(
                         "x2",
-                        roi_config.get("roi_x2", camera_roi.x2 if camera_roi is not None else ROI_X2),
+                        roi_config.get(
+                            "roi_x2",
+                            camera_roi.x2 if camera_roi is not None else ROI_X2,
+                        ),
                     ),
                     "roi.x2",
                 ),
                 "roi_y2": self._as_float(
                     roi_config.get(
                         "y2",
-                        roi_config.get("roi_y2", camera_roi.y2 if camera_roi is not None else ROI_Y2),
+                        roi_config.get(
+                            "roi_y2",
+                            camera_roi.y2 if camera_roi is not None else ROI_Y2,
+                        ),
                     ),
                     "roi.y2",
                 ),
-                "allow_simulation": self._as_bool(inspection_config.get("allow_simulation", True)),
-                "decision_mode": str(inspection_config.get("decision_mode", "consecutive")),
+                "allow_simulation": self._as_bool(
+                    inspection_config.get("allow_simulation", True)
+                ),
+                "decision_mode": str(
+                    inspection_config.get("decision_mode", "consecutive")
+                ),
                 "rolling_window_size": self._as_positive_int(
                     inspection_config.get("rolling_window_size", 8),
                     "rolling_window_size",
@@ -2701,17 +2846,25 @@ class RuntimeDetectorService:
                 with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
             except json.JSONDecodeError as exc:
-                raise ProfileConfigError(f"Invalid profile config JSON: {config_path}: {exc}") from exc
+                raise ProfileConfigError(
+                    f"Invalid profile config JSON: {config_path}: {exc}"
+                ) from exc
 
         yaml_path = PROFILE_CONFIGS_DIR / profile_dir.name / "config.yaml"
         if yaml_path.exists():
             try:
-                yaml_config = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+                yaml_config = (
+                    yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+                )
             except yaml.YAMLError as exc:
-                raise ProfileConfigError(f"Invalid runtime profile YAML: {yaml_path}: {exc}") from exc
+                raise ProfileConfigError(
+                    f"Invalid runtime profile YAML: {yaml_path}: {exc}"
+                ) from exc
 
             if not isinstance(yaml_config, dict):
-                raise ProfileConfigError(f"Runtime profile YAML must be an object: {yaml_path}")
+                raise ProfileConfigError(
+                    f"Runtime profile YAML must be an object: {yaml_path}"
+                )
             config = RuntimeDetectorService._deep_merge(config, yaml_config)
 
         return config
@@ -2744,7 +2897,9 @@ def create_app(service):
 
     @app.get("/")
     def dashboard():
-        snapshot_interval_ms = getattr(service, "snapshot_interval_ms", DEFAULT_SNAPSHOT_INTERVAL_MS)
+        snapshot_interval_ms = getattr(
+            service, "snapshot_interval_ms", DEFAULT_SNAPSHOT_INTERVAL_MS
+        )
         snapshot_interval_seconds = snapshot_interval_ms / 1000
         snapshot_enabled = bool(getattr(service, "enable_snapshot", False))
         snapshot_refresh_text = (
@@ -2753,8 +2908,7 @@ def create_app(service):
             else "Live image: disabled"
         )
         return (
-            DASHBOARD_HTML
-            .replace("__SNAPSHOT_REFRESH_MS__", str(snapshot_interval_ms))
+            DASHBOARD_HTML.replace("__SNAPSHOT_REFRESH_MS__", str(snapshot_interval_ms))
             .replace("__SNAPSHOT_REFRESH_TEXT__", snapshot_refresh_text)
             .replace("__SNAPSHOT_ENABLED__", "true" if snapshot_enabled else "false")
         )
@@ -2790,10 +2944,14 @@ def create_app(service):
 
 
 def create_parser():
-    parser = argparse.ArgumentParser(description="Raspberry Pi runtime detection service")
+    parser = argparse.ArgumentParser(
+        description="Raspberry Pi runtime detection service"
+    )
     camera_index_env = os.getenv("VISION_CAMERA_INDEX")
     imgsz_env = os.getenv("IMGSZ") or os.getenv("VISION_IMGSZ")
-    parser.add_argument("--profile", default=os.getenv("VISION_MODEL_PROFILE", ACTIVE_MODEL_PROFILE))
+    parser.add_argument(
+        "--profile", default=os.getenv("VISION_MODEL_PROFILE", ACTIVE_MODEL_PROFILE)
+    )
     parser.add_argument(
         "--model",
         "--model-path",
@@ -2810,7 +2968,8 @@ def create_parser():
     parser.add_argument(
         "--prefer-edge-model",
         action="store_true",
-        default=os.getenv("VISION_PREFER_EDGE_MODEL", "").lower() in {"1", "true", "yes", "on"},
+        default=os.getenv("VISION_PREFER_EDGE_MODEL", "").lower()
+        in {"1", "true", "yes", "on"},
         help="Prefer exported edge models such as best_ncnn_model/ when available.",
     )
     parser.add_argument(
@@ -2841,13 +3000,15 @@ def create_parser():
     parser.add_argument(
         "--camera-only",
         action="store_true",
-        default=os.getenv("VISION_CAMERA_ONLY", "").lower() in {"1", "true", "yes", "on"},
+        default=os.getenv("VISION_CAMERA_ONLY", "").lower()
+        in {"1", "true", "yes", "on"},
         help="Start camera, dashboard, API, and optional snapshots without loading or running inference.",
     )
     parser.add_argument(
         "--disable-inference",
         action="store_true",
-        default=os.getenv("VISION_DISABLE_INFERENCE", "").lower() in {"1", "true", "yes", "on"},
+        default=os.getenv("VISION_DISABLE_INFERENCE", "").lower()
+        in {"1", "true", "yes", "on"},
         help="Keep runtime structure alive but skip model loading and prediction.",
     )
     parser.add_argument(
@@ -2857,7 +3018,9 @@ def create_parser():
         help="Run without a YOLO model using simulated detections for dashboard/runtime testing.",
     )
     parser.add_argument("--host", default=os.getenv("VISION_HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("VISION_PORT", "8000")))
+    parser.add_argument(
+        "--port", type=int, default=int(os.getenv("VISION_PORT", "8000"))
+    )
     parser.add_argument("--confidence", type=float, default=None)
     parser.add_argument(
         "--confidence-threshold-override",
@@ -2891,38 +3054,49 @@ def create_parser():
     parser.add_argument(
         "--frame-width",
         type=int,
-        default=int(os.getenv("VISION_FRAME_WIDTH")) if os.getenv("VISION_FRAME_WIDTH") else None,
+        default=int(os.getenv("VISION_FRAME_WIDTH"))
+        if os.getenv("VISION_FRAME_WIDTH")
+        else None,
     )
     parser.add_argument(
         "--frame-height",
         type=int,
-        default=int(os.getenv("VISION_FRAME_HEIGHT")) if os.getenv("VISION_FRAME_HEIGHT") else None,
+        default=int(os.getenv("VISION_FRAME_HEIGHT"))
+        if os.getenv("VISION_FRAME_HEIGHT")
+        else None,
     )
     parser.add_argument(
         "--inference-interval-ms",
         type=int,
-        default=int(os.getenv("VISION_INFERENCE_INTERVAL_MS", DEFAULT_INFERENCE_INTERVAL_MS)),
+        default=int(
+            os.getenv("VISION_INFERENCE_INTERVAL_MS", DEFAULT_INFERENCE_INTERVAL_MS)
+        ),
     )
     parser.add_argument(
         "--snapshot-interval-ms",
         type=int,
-        default=int(os.getenv("VISION_SNAPSHOT_INTERVAL_MS", DEFAULT_SNAPSHOT_INTERVAL_MS)),
+        default=int(
+            os.getenv("VISION_SNAPSHOT_INTERVAL_MS", DEFAULT_SNAPSHOT_INTERVAL_MS)
+        ),
     )
     parser.add_argument(
         "--enable-snapshot",
         action="store_true",
-        default=os.getenv("VISION_ENABLE_SNAPSHOT", "").lower() in {"1", "true", "yes", "on"},
+        default=os.getenv("VISION_ENABLE_SNAPSHOT", "").lower()
+        in {"1", "true", "yes", "on"},
     )
     parser.add_argument(
         "--debug-detections",
         action="store_true",
-        default=os.getenv("VISION_DEBUG_DETECTIONS", "").lower() in {"1", "true", "yes", "on"},
+        default=os.getenv("VISION_DEBUG_DETECTIONS", "").lower()
+        in {"1", "true", "yes", "on"},
         help="Write raw YOLO detection debug JSONL records under data/debug_frames/.",
     )
     parser.add_argument(
         "--save-debug-frames",
         action="store_true",
-        default=os.getenv("VISION_SAVE_DEBUG_FRAMES", "").lower() in {"1", "true", "yes", "on"},
+        default=os.getenv("VISION_SAVE_DEBUG_FRAMES", "").lower()
+        in {"1", "true", "yes", "on"},
         help="Save raw and annotated debug frames under data/debug_frames/.",
     )
     parser.add_argument(
@@ -2998,7 +3172,9 @@ def main():
     service.start()
 
     try:
-        create_app(service).run(host=args.host, port=args.port, threaded=True, use_reloader=False)
+        create_app(service).run(
+            host=args.host, port=args.port, threaded=True, use_reloader=False
+        )
     finally:
         service.stop()
 

@@ -44,6 +44,21 @@ python3 -m venv --system-site-packages "$PROJECT_DIR/.venv"
 "$PROJECT_DIR/.venv/bin/python" -m pip install -r "$PROJECT_DIR/requirements-pi-runtime.txt"
 "$PROJECT_DIR/.venv/bin/python" -m pip uninstall -y numpy opencv-python opencv-contrib-python || true
 
+echo "Verifying runtime imports and system camera packages..."
+"$PROJECT_DIR/.venv/bin/python" - <<'PY'
+from pathlib import Path
+from picamera2 import Picamera2
+import cv2
+import flask
+import numpy
+import yaml
+
+print("NumPy:", numpy.__version__, Path(numpy.__file__).resolve())
+print("OpenCV:", cv2.__version__, Path(cv2.__file__).resolve())
+print("Picamera2:", Picamera2)
+print("Flask:", getattr(flask, "__version__", "unknown))
+print("YAML:", Path(yaml.__file__).resolve())
+
 mkdir -p \
   "$PROJECT_DIR/data/datasets" \
   "$PROJECT_DIR/data/logs" \

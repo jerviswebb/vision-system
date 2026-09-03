@@ -2,7 +2,7 @@
 #
 # Do not install this file on Raspberry Pi runtime machines. It includes
 # desktop and pip OpenCV/NumPy packages that can conflict with apt-installed
-# Picamera2/libcamera. On Raspberry Pi use deploy/install_pi_runtime.sh and
+# Picamera2/libcamera. On Raspberry Pi use deploy/install_pi.sh and
 # requirements-pi-runtime.txt instead.
 ultralytics
 opencv-python

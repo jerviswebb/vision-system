@@ -1,33 +1,22 @@
 {
-    "name": "Vision System Dev",
-    "image": "mcr.microsoft.com/devcontainers/python:3.11",
-
-    "features": {
-        "ghcr.io/devcontainers/features/docker-in-docker" : {
-            "version": "latest",
-            "moby": true
-        },
-        "ghcr.io/devcontainers/features/git:1": {}
+    "name": "Vision System Runtime",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
     },
-
     "customizations": {
         "vscode": {
             "extensions": [
                 "ms-python.python",
                 "ms-python.vscode-pylance",
-                "ms-vscode.docker",
-                "redhat.ansible",
-                "charliemarsh.ruff",
-                "ms-python.debugpy"
+                "charliermarsh.ruff",
             ],
             "settings": {
                 "python.defaultInterpreterPath": "/usr/local/bin/python",
-                "python.linting.enabled": true,
-                "python.linting.ruffEnabled": true,
-                "python.formatting.provider": "black",
+               
                 "[python]": {
-                    "editor.formatOnSave": true,
-                    "editor.defaultFormatter": "ms-python.python"
+                    "editor.defaultFormatter": "charliermarsh.ruff",
+                    "editor.formatOnSave": true
                 }
             }
         }
@@ -36,17 +25,12 @@
     "forwardPorts": [8000],
     "portsAttributes": {
         "8000": {
-            "label": "Vision System Web UI",
+            "label": "Vision Runtime Dashboard",
             "onAutoForward": "notify"
         }
     },
 
     "postCreateCommand": "bash .devcontainer/post-create.sh",
 
-    "remoteUser": "vscode",
-
-    "mounts": [
-        "source=${localEnv:HOME}/.ssh. target=/home/vscode/.ssh, readonly"
-    ]
-
+    "remoteUser": "vscode"
 }

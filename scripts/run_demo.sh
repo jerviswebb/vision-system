@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [ ! -x ".venv/bin/python" ]; then
-  echo "Missing .venv. Run scripts/setup_local.sh first."
-  exit 1
+PYTHON_BIN="python"
+if [ -x ".venv/bin/python" ]; then
+  PYTHON_BIN=".venv/bin/python"
 fi
 
 PROFILE="${VISION_MODEL_PROFILE:-yellow_daifuku}"
@@ -32,7 +32,7 @@ if [ -z "$CAMERA_SOURCE" ]; then
 fi
 
 ARGS=(
-  .venv/bin/python -m app.runtime.detector_service
+  "$PYTHON_BIN" -m app.runtime.detector_service
   --profile "$PROFILE"
   --camera-source "$CAMERA_SOURCE"
   --host "$HOST"

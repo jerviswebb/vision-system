@@ -43,6 +43,7 @@ class ActionManager:
         self.event_cooldown_seconds = max(0.0, float(event_cooldown_seconds))
         self.console_print = bool(console_print)
         self.last_event_times = {}
+        self.last_counted_identity = None
         self.counters = {
             "pass": 0,
             "fail": 0,
@@ -62,8 +63,10 @@ class ActionManager:
         result = status_document.get("inspection_result", "NO_PART")
         actions = self.action_map.get(result, [])
 
-        if "increment_counter" in actions:
+        identity = (status_document.get("inspection_id"), result)
+        if "increment_counter" in actions and identity != self.last_counted_identity:
             self._increment_counter(result)
+            self.last_counted_identity = identity
 
         status_document = dict(status_document)
         status_document["counters"] = {

@@ -23,7 +23,7 @@ echo "Camera backend: $CAMERA_BACKEND"
 echo
 
 if [ ! -f "$VENV_DIR/bin/activate" ]; then
-  fail "Missing venv at $VENV_DIR. Run deploy/install_pi_runtime.sh first."
+  fail "Missing venv at $VENV_DIR. Run deploy/install_pi.sh first."
 fi
 
 # shellcheck source=/dev/null

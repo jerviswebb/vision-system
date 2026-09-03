@@ -1,0 +1,7 @@
+# Lean runtime/simulation development dependencies
+Flask
+numpy
+opencv-python-headless
+psutil
+PyYAML
+ruff
