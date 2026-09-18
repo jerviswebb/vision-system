@@ -8,15 +8,23 @@ set -euo pipefail
 #   VISION_PROJECT_DIR=/opt/vision-system
 #   VISION_SERVICE_USER=pi
 #   VISION_SERVICE_GROUP=pi
+#   VISION_MODEL_PROFILE=weld_profile
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${VISION_PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 SERVICE_USER="${VISION_SERVICE_USER:-$(id -un)}"
 SERVICE_GROUP="${VISION_SERVICE_GROUP:-$(id -gn)}"
+MODEL_PROFILE="${VISION_MODEL_PROFILE:-yellow_daifuku}"
 SERVICE_FILE="/etc/systemd/system/vision.service"
+
+if [[ ! "$MODEL_PROFILE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Invalid VISION_MODEL_PROFILE: $MODEL_PROFILE" >&2
+  exit 2
+fi
 
 echo "Installing Vision System runtime from: $PROJECT_DIR"
 echo "Service user/group: $SERVICE_USER:$SERVICE_GROUP"
+echo "Model profile: $MODEL_PROFILE"
 
 sudo apt-get update
 sudo apt-get install -y \
@@ -58,6 +66,7 @@ print("OpenCV:", cv2.__version__, Path(cv2.__file__).resolve())
 print("Picamera2:", Picamera2)
 print("Flask:", getattr(flask, "__version__", "unknown))
 print("YAML:", Path(yaml.__file__).resolve())
+PY
 
 mkdir -p \
   "$PROJECT_DIR/data/datasets" \
@@ -70,7 +79,8 @@ mkdir -p \
 
 sudo install -m 0644 "$SCRIPT_DIR/vision.service" "$SERVICE_FILE"
 sudo sed -i "s|^WorkingDirectory=.*|WorkingDirectory=$PROJECT_DIR|" "$SERVICE_FILE"
-sudo sed -i "s|^ExecStart=.*|ExecStart=$PROJECT_DIR/.venv/bin/python -m app.runtime.detector_service --profile yellow_daifuku --camera-profile pi_camera3 --camera-backend picamera2 --prefer-edge-model --model-format auto --host 0.0.0.0 --port 8000 --frame-width 640 --frame-height 480 --inference-interval-ms 300|" "$SERVICE_FILE"
+sudo sed -i "s|^Environment=VISION_MODEL_PROFILE=.*|Environment=VISION_MODEL_PROFILE=$MODEL_PROFILE|" "$SERVICE_FILE"
+sudo sed -i "s|^ExecStart=.*|ExecStart=$PROJECT_DIR/.venv/bin/python -m app.runtime.detector_service --camera-profile pi_camera3 --camera-backend picamera2 --prefer-edge-model --model-format auto --host 0.0.0.0 --port 8000 --frame-width 640 --frame-height 480 --inference-interval-ms 300|" "$SERVICE_FILE"
 sudo sed -i "s|^User=.*|User=$SERVICE_USER|" "$SERVICE_FILE"
 sudo sed -i "s|^Group=.*|Group=$SERVICE_GROUP|" "$SERVICE_FILE"
 
@@ -80,6 +90,6 @@ echo "Installed $SERVICE_FILE"
 echo
 echo "Next commands:"
 echo "  source \"$PROJECT_DIR/.venv/bin/activate\""
-echo "  python -m app.runtime.health_check --mode pi --profile yellow_daifuku --camera-backend picamera2"
-echo "  python -m app.runtime.detector_service --profile yellow_daifuku --camera-profile pi_camera3 --camera-backend picamera2 --prefer-edge-model --model-format auto --host 0.0.0.0 --port 8000 --frame-width 640 --frame-height 480 --inference-interval-ms 300"
+echo "  python -m app.runtime.health_check --mode pi --profile $MODEL_PROFILE --camera-backend picamera2"
+echo "  python -m app.runtime.detector_service --profile $MODEL_PROFILE --camera-profile pi_camera3 --camera-backend picamera2 --prefer-edge-model --model-format auto --host 0.0.0.0 --port 8000 --frame-width 640 --frame-height 480 --inference-interval-ms 300"
 echo "  deploy/start_service.sh"

@@ -39,6 +39,12 @@ From the repository root on the Pi:
 deploy/install_pi.sh
 ```
 
+To install a different model profile:
+
+```bash
+VISION_MODEL_PROFILE=weld_profile deploy/install_pi.sh
+```
+
 The installer:
 
 - Installs runtime apt packages.
@@ -46,6 +52,7 @@ The installer:
 - Installs minimal pip runtime dependencies from `requirements-pi-runtime.txt`.
 - Removes pip `numpy`, `opencv-python`, and `opencv-contrib-python` if they were pulled in.
 - Prints the file paths for NumPy and OpenCV so you can confirm they are not loading from `.venv`.
+- Configures `vision.service` to start the selected model profile.
 
 Do not run `pip install -r requirements.txt` on the Pi. That file is for desktop/training and can install incompatible pip NumPy/OpenCV wheels.
 
