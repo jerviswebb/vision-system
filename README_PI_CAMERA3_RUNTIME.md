@@ -17,7 +17,7 @@ The runtime is status-first. Smooth browser video is not the production goal. `-
 Preferred one-command runtime setup:
 
 ```bash
-deploy/install_pi_runtime.sh
+deploy/install_pi.sh
 ```
 
 Do not install the desktop/training `requirements.txt` on the Pi runtime. See [README_PI_RUNTIME_SETUP.md](README_PI_RUNTIME_SETUP.md) for the reason and the full repeatable workflow.

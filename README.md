@@ -59,7 +59,7 @@ data/
   review_images/           # runtime/desktop review images
 
 deploy/
-  install_pi.sh            # Raspberry Pi / Linux installer
+  install_pi.sh            # Canonical Raspberry Pi / Linux installer
   start_service.sh         # systemd service start helper
   vision.service           # systemd unit template
 
@@ -86,7 +86,7 @@ Use Python 3.10+.
 **Raspberry Pi runtime warning:** do not run `pip install -r requirements.txt` on the Pi runtime. That file is for desktop/training and can install pip NumPy/OpenCV wheels that break apt-installed Picamera2/libcamera. On Raspberry Pi use:
 
 ```bash
-deploy/install_pi_runtime.sh
+deploy/install_pi.sh
 ```
 
 See [README_PI_RUNTIME_SETUP.md](README_PI_RUNTIME_SETUP.md) for the Pi-specific install, validation, runtime, and detection-debug workflow.
@@ -121,6 +121,18 @@ On Windows:
 pip install -r requirements.txt
 ```
 
+## Development Container
+
+Open the repository in its dev container for runtime, simulation, linting, and tests:
+
+```bash
+python -m unittest discover -s tests
+scripts/run_demo.sh
+```
+
+The lean container intentionally excludes the PySide desktop UI, model training, physical camera access, Torch, and Ultralytics. Use the host setup below for those workflows
+
+Before rebuilding, copy the approved corporate root CA to `.devcontainer/cert.crt`. Certificate files are local-only and ignored by Git.
 ## Run Local Demo
 
 After setup, launch the laptop-safe dashboard demo:
@@ -152,6 +164,8 @@ python -m app.main --model models/yellow_daifuku/best.pt --camera 0
 The desktop app supports live detection, model profile switching, training image collection, dataset training, training reports, camera reconnect status, ROI filtering, and structured logs.
 
 ## Desktop Training Workflow
+
+For the complete weld-specific capture, training, export, and Pi deployment process, see [Weld Model Workflow](docs/WELD_MODEL_WORKFLOW.md).
 
 1. Collect images into `data/datasets/<profile>/images/train`.
 2. Label images externally or with `training/label_images.py`.

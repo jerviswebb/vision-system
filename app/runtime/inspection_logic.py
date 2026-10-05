@@ -1,9 +1,11 @@
 from collections import deque
 from dataclasses import dataclass
 
-from app.config import DEFAULT_CONFIDENCE, ROI_ENABLED, ROI_X1, ROI_Y1, ROI_X2, ROI_Y2
-from app.runtime.inspection_result import canonical_state_from_result, generate_inspection_id
-
+from app.config import DEFAULT_CONFIDENCE, ROI_ENABLED, ROI_X1, ROI_X2, ROI_Y1, ROI_Y2
+from app.runtime.inspection_result import (
+    canonical_state_from_result,
+    generate_inspection_id,
+)
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -67,8 +69,12 @@ class InspectionLogic:
 
         self.acceptable_classes = self._clean_class_set(acceptable_classes)
         self.reject_classes = self._clean_class_set(reject_classes)
-        self.target_classes = self.acceptable_classes or self._clean_class_set(target_classes)
-        self.minimum_confidence = self._safe_float(minimum_confidence, DEFAULT_CONFIDENCE)
+        self.target_classes = self.acceptable_classes or self._clean_class_set(
+            target_classes
+        )
+        self.minimum_confidence = self._safe_float(
+            minimum_confidence, DEFAULT_CONFIDENCE
+        )
         self.detection_required_frames = max(1, int(detection_required_frames))
         self.miss_required_frames = max(1, int(miss_required_frames))
         self.allow_simulation = bool(allow_simulation)
@@ -77,7 +83,9 @@ class InspectionLogic:
             self.decision_mode = "consecutive"
         self.rolling_window_size = max(1, int(rolling_window_size))
         self.rolling_min_agreeing = max(1, int(rolling_min_agreeing))
-        self.rolling_min_agreement_ratio = max(0.0, min(1.0, float(rolling_min_agreement_ratio)))
+        self.rolling_min_agreement_ratio = max(
+            0.0, min(1.0, float(rolling_min_agreement_ratio))
+        )
         self.rolling_min_average_confidence = self._safe_float(
             rolling_min_average_confidence,
             self.minimum_confidence,
@@ -100,16 +108,22 @@ class InspectionLogic:
         previous_result = self.state.inspection_result
 
         if camera_status != "Connected":
-            self._set_system_result(CAMERA_ERROR, False, f"Camera status is {camera_status}.")
+            self._set_system_result(
+                CAMERA_ERROR, False, f"Camera status is {camera_status}."
+            )
             self._finalize_canonical_fields()
             return self.snapshot()
 
         if model_status not in {"Loaded", "Simulation"}:
-            self._set_system_result(MODEL_ERROR, False, f"Model status is {model_status}.")
+            self._set_system_result(
+                MODEL_ERROR, False, f"Model status is {model_status}."
+            )
             self._finalize_canonical_fields()
             return self.snapshot()
 
-        raw_detected, best_detection = self._find_best_detection(detections or [], frame_shape)
+        raw_detected, best_detection = self._find_best_detection(
+            detections or [], frame_shape
+        )
         self.state.raw_detected = raw_detected
 
         if self.decision_mode == "rolling_window":
@@ -122,7 +136,9 @@ class InspectionLogic:
         if simulation_mode:
             message = "Simulation mode is active."
             if not self.allow_simulation:
-                message = "Simulation mode is active and is not allowed by this profile."
+                message = (
+                    "Simulation mode is active and is not allowed by this profile."
+                )
             self.state.inspection_result = SIMULATION
             self.state.pass_fail_bool = None
             self.state.result_message = message
@@ -164,6 +180,14 @@ class InspectionLogic:
             },
         }
 
+    def system_result(self, result, pass_fail_bool, message):
+        self._set_system_result(result, pass_fail_bool, str(message))
+        self._finalize_canonical_fields()
+        return self.snapshot()
+
+    def system_error(self, message):
+        return self.system_result("SYSTEM_ERROR", False, message)
+
     def _handle_detection(self, detection):
         class_name = detection["class_name"]
         confidence = detection["confidence"]
@@ -182,7 +206,9 @@ class InspectionLogic:
                 f"Detection confidence is below threshold ({confidence_value:.3f} < "
                 f"{self.minimum_confidence:.3f})."
             )
-            self.state.average_confidence = confidence_value if confidence_value >= 0 else None
+            self.state.average_confidence = (
+                confidence_value if confidence_value >= 0 else None
+            )
             self.state.agreement_ratio = 1.0
             return
 
@@ -198,7 +224,9 @@ class InspectionLogic:
             self.state.detection_frame_count = 1
 
         if self.state.detection_frame_count < self.detection_required_frames:
-            self.state.result_message = "Detection observed; waiting for stable confirmation."
+            self.state.result_message = (
+                "Detection observed; waiting for stable confirmation."
+            )
             return
 
         was_stable = self.state.stable_detected
@@ -228,7 +256,9 @@ class InspectionLogic:
             )
             if self.state.miss_frame_count < self.miss_required_frames:
                 self.state.inspection_result = previous_result
-                self.state.result_message = "No detection; waiting before clearing inspection state."
+                self.state.result_message = (
+                    "No detection; waiting before clearing inspection state."
+                )
                 return
         else:
             class_name = detection["class_name"]
@@ -247,7 +277,9 @@ class InspectionLogic:
                     f"{self.minimum_confidence:.3f})."
                 )
             else:
-                candidate_result, pass_fail_bool, message = self._class_result(class_name)
+                candidate_result, pass_fail_bool, message = self._class_result(
+                    class_name
+                )
 
             self.rolling_window.append(
                 {
@@ -263,7 +295,9 @@ class InspectionLogic:
         if dominant is None:
             self.state.stable_detected = False
             self.state.inspection_result = "REVIEW" if raw_detected else previous_result
-            self.state.pass_fail_bool = False if raw_detected else self.state.pass_fail_bool
+            self.state.pass_fail_bool = (
+                False if raw_detected else self.state.pass_fail_bool
+            )
             self.state.result_message = "Waiting for enough rolling-window agreement."
             return
 
@@ -290,7 +324,10 @@ class InspectionLogic:
 
         result, count = max(counts.items(), key=lambda item: item[1])
         agreement_ratio = count / len(self.rolling_window)
-        if count < self.rolling_min_agreeing or agreement_ratio < self.rolling_min_agreement_ratio:
+        if (
+            count < self.rolling_min_agreeing
+            or agreement_ratio < self.rolling_min_agreement_ratio
+        ):
             return None
 
         agreeing = [item for item in self.rolling_window if item["result"] == result]
@@ -301,7 +338,9 @@ class InspectionLogic:
         ]
         valid_confidences = [value for value in confidences if value >= 0]
         average_confidence = (
-            sum(valid_confidences) / len(valid_confidences) if valid_confidences else None
+            sum(valid_confidences) / len(valid_confidences)
+            if valid_confidences
+            else None
         )
         if (
             result in {PASS, FAIL}
@@ -318,18 +357,20 @@ class InspectionLogic:
             "confidence": latest.get("confidence"),
             "message": latest.get("message"),
             "average_confidence": (
-                round(float(average_confidence), 6) if average_confidence is not None else None
+                round(float(average_confidence), 6)
+                if average_confidence is not None
+                else None
             ),
             "agreement_ratio": round(float(agreement_ratio), 6),
         }
 
     def _finalize_canonical_fields(self):
-        canonical_state = canonical_state_from_result(self.state.inspection_result).value
+        canonical_state = canonical_state_from_result(
+            self.state.inspection_result
+        ).value
         identity = (
             canonical_state,
             self.state.inspection_result,
-            self.state.class_name,
-            self.state.confidence,
             self.state.stable_detected,
         )
         previous_identity = getattr(self, "_last_decision_identity", None)
@@ -355,18 +396,24 @@ class InspectionLogic:
             self.state.agreement_ratio = 1.0
         else:
             self.state.inspection_result = previous_result
-            self.state.result_message = "No detection; waiting before clearing inspection state."
+            self.state.result_message = (
+                "No detection; waiting before clearing inspection state."
+            )
 
     def _set_system_result(self, result, pass_fail_bool, message):
         self.state.raw_detected = False
         self.state.stable_detected = False
+        self.state.class_name = None
+        self.state.confidence = None
         self.state.detection_frame_count = 0
         self.state.miss_frame_count += 1
+        self.state.candidate_result = None
+        self.state.candidate_class = None
         self.state.inspection_result = result
         self.state.pass_fail_bool = pass_fail_bool
         self.state.result_message = message
         self.state.average_confidence = None
-        self.state.agreement_ratio = 1.0
+        self.state.agreement_ratio = None
 
     def _class_result(self, class_name):
         normalized_class = normalize_class_name(class_name)
@@ -394,9 +441,9 @@ class InspectionLogic:
                 continue
 
             confidence = detection.get("confidence")
-            if best_detection is None or self._confidence_value(confidence) > self._confidence_value(
-                best_detection["confidence"]
-            ):
+            if best_detection is None or self._confidence_value(
+                confidence
+            ) > self._confidence_value(best_detection["confidence"]):
                 best_detection = {
                     "class_name": str(class_name),
                     "confidence": confidence,
@@ -417,7 +464,10 @@ class InspectionLogic:
 
         center_x = ((bbox[0] + bbox[2]) / 2) / width
         center_y = ((bbox[1] + bbox[3]) / 2) / height
-        return self.roi_x1 <= center_x <= self.roi_x2 and self.roi_y1 <= center_y <= self.roi_y2
+        return (
+            self.roi_x1 <= center_x <= self.roi_x2
+            and self.roi_y1 <= center_y <= self.roi_y2
+        )
 
     @staticmethod
     def _normalized_roi(x1, y1, x2, y2):

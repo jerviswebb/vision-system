@@ -4,7 +4,6 @@ import shutil
 import time
 from dataclasses import dataclass, field
 
-
 HEALTHY = "HEALTHY"
 DEGRADED = "DEGRADED"
 UNHEALTHY = "UNHEALTHY"
@@ -48,18 +47,25 @@ class HealthMonitor:
         if not model_loaded and not inference_disabled:
             reasons.append("Model is not loaded.")
 
-        if inference_latency_ms is not None and inference_latency_ms > self.high_latency_ms:
+        if (
+            inference_latency_ms is not None
+            and inference_latency_ms > self.high_latency_ms
+        ):
             warnings.append("Inference latency is high.")
 
         disk = self._disk_snapshot(data_path)
         if disk and disk["free_pct"] < self.min_free_disk_pct:
             warnings.append("Free disk space is low.")
 
-        if image_quality_status and image_quality_status not in {"GOOD", "DISABLED", "NO_FRAME"}:
+        if image_quality_status and image_quality_status not in {
+            "GOOD",
+            "DISABLED",
+            "NO_FRAME",
+        }:
             warnings.append(f"Image quality is {image_quality_status}.")
 
         if self.last_system_error:
-            warnings.append(self.last_system_error)
+            reasons.append(self.last_system_error)
 
         status = HEALTHY
         if warnings:

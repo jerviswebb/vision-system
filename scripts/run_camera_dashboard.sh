@@ -12,7 +12,7 @@ PORT="${PORT:-8000}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 if [ ! -f "$VENV_DIR/bin/activate" ]; then
-  echo "[FAIL] Missing venv at $VENV_DIR. Run deploy/install_pi_runtime.sh first." >&2
+  echo "[FAIL] Missing venv at $VENV_DIR. Run deploy/install_pi.sh first." >&2
   exit 1
 fi
 

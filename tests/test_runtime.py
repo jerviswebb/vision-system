@@ -17,9 +17,8 @@ import app.runtime.detector_service as detector_service
 import app.runtime.health_check as health_check
 import training.build_pi_camera_dataset as build_pi_camera_dataset
 import training.label_images as label_images
-from scripts import capture_dataset_images
-from app.runtime.camera_profile import CameraProfileError, load_camera_profile
 from app.runtime.action_manager import ActionManager
+from app.runtime.camera_profile import CameraProfileError, load_camera_profile
 from app.runtime.camera_sources import SimulatedCameraSource
 from app.runtime.image_quality import (
     BLURRY,
@@ -33,6 +32,7 @@ from app.runtime.inspection_logic import InspectionLogic
 from app.runtime.output_manager import OutputManager
 from app.runtime.picamera2_manager import Picamera2CameraManager
 from app.runtime.preprocessing import apply_roi, preprocess_for_inference
+from scripts import capture_dataset_images
 
 
 class DummyOutputManager:
@@ -59,7 +59,9 @@ class DummyOutputManager:
     def log_startup(self, active_profile, details):
         return None
 
-    def log_fault(self, active_profile, fault_type, message, details=None, cooldown_seconds=10.0):
+    def log_fault(
+        self, active_profile, fault_type, message, details=None, cooldown_seconds=10.0
+    ):
         return None
 
 
@@ -167,7 +169,9 @@ class RuntimeTests(unittest.TestCase):
                 source.release()
 
     def test_inspection_logic_smoothing(self):
-        logic = InspectionLogic(["part"], detection_required_frames=3, miss_required_frames=3)
+        logic = InspectionLogic(
+            ["part"], detection_required_frames=3, miss_required_frames=3
+        )
         detection = {"class_name": "part", "confidence": 0.9, "bbox": [0, 0, 10, 10]}
         shape = (20, 20, 3)
 
@@ -194,7 +198,11 @@ class RuntimeTests(unittest.TestCase):
         outside = {"class_name": "part", "confidence": 0.95, "bbox": [0, 0, 10, 10]}
         self.assertFalse(logic.update([outside], shape)["raw_detected"])
 
-        inside_bad_confidence = {"class_name": "part", "confidence": "bad", "bbox": [40, 40, 60, 60]}
+        inside_bad_confidence = {
+            "class_name": "part",
+            "confidence": "bad",
+            "bbox": [40, 40, 60, 60],
+        }
         snapshot = logic.update([inside_bad_confidence], shape)
         self.assertTrue(snapshot["raw_detected"])
         self.assertEqual(snapshot["confidence"], "bad")
@@ -219,7 +227,11 @@ class RuntimeTests(unittest.TestCase):
             detection_required_frames=1,
             miss_required_frames=1,
         )
-        detection = {"class_name": "yellow daifuku", "confidence": 0.91, "bbox": [0, 0, 10, 10]}
+        detection = {
+            "class_name": "yellow daifuku",
+            "confidence": 0.91,
+            "bbox": [0, 0, 10, 10],
+        }
         snapshot = logic.update([detection], (20, 20, 3))
         self.assertEqual(snapshot["inspection_result"], "PASS")
         self.assertEqual(snapshot["class_name"], "yellow daifuku")
@@ -238,9 +250,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(snapshot["pass_fail_bool"])
 
     def test_no_detections_produce_no_part_after_threshold(self):
-        logic = InspectionLogic(["part"], detection_required_frames=1, miss_required_frames=2)
+        logic = InspectionLogic(
+            ["part"], detection_required_frames=1, miss_required_frames=2
+        )
         detection = {"class_name": "part", "confidence": 0.91, "bbox": [0, 0, 10, 10]}
-        self.assertEqual(logic.update([detection], (20, 20, 3))["inspection_result"], "PASS")
+        self.assertEqual(
+            logic.update([detection], (20, 20, 3))["inspection_result"], "PASS"
+        )
         self.assertEqual(logic.update([], (20, 20, 3))["inspection_result"], "PASS")
         snapshot = logic.update([], (20, 20, 3))
         self.assertEqual(snapshot["inspection_result"], "NO_PART")
@@ -259,14 +275,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(snapshot["pass_fail_bool"])
 
     def test_camera_error_produces_camera_error(self):
-        logic = InspectionLogic(["part"], detection_required_frames=1, miss_required_frames=1)
+        logic = InspectionLogic(
+            ["part"], detection_required_frames=1, miss_required_frames=1
+        )
         snapshot = logic.update([], (20, 20, 3), camera_status="Failed")
         self.assertEqual(snapshot["inspection_result"], "CAMERA_ERROR")
         self.assertFalse(snapshot["pass_fail_bool"])
 
     def test_camera_error_is_not_hidden_by_simulation(self):
-        logic = InspectionLogic(["part"], detection_required_frames=1, miss_required_frames=1)
-        snapshot = logic.update([], (20, 20, 3), camera_status="Failed", simulation_mode=True)
+        logic = InspectionLogic(
+            ["part"], detection_required_frames=1, miss_required_frames=1
+        )
+        snapshot = logic.update(
+            [], (20, 20, 3), camera_status="Failed", simulation_mode=True
+        )
         self.assertEqual(snapshot["inspection_result"], "CAMERA_ERROR")
 
     def test_dry_run_produces_simulation_result(self):
@@ -275,7 +297,11 @@ class RuntimeTests(unittest.TestCase):
             detection_required_frames=1,
             miss_required_frames=1,
         )
-        detection = {"class_name": "simulated_object", "confidence": 0.91, "bbox": [0, 0, 10, 10]}
+        detection = {
+            "class_name": "simulated_object",
+            "confidence": 0.91,
+            "bbox": [0, 0, 10, 10],
+        }
         snapshot = logic.update([detection], (20, 20, 3), simulation_mode=True)
         self.assertEqual(snapshot["inspection_result"], "SIMULATION")
         self.assertIsNone(snapshot["pass_fail_bool"])
@@ -319,11 +345,15 @@ class RuntimeTests(unittest.TestCase):
         )
 
     def test_missing_profile_has_useful_error(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.object(detector_service, "MODELS_DIR", Path(tmpdir)):
-                service = detector_service.RuntimeDetectorService(profile_name="missing_profile")
-                self.assertEqual(service.model_status, "Error")
-                self.assertIn("Model profile not found", service.model_error)
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.object(detector_service, "MODELS_DIR", Path(tmpdir)),
+        ):
+            service = detector_service.RuntimeDetectorService(
+                profile_name="missing_profile"
+            )
+            self.assertEqual(service.model_status, "Error")
+            self.assertIn("Model profile not found", service.model_error)
 
     def test_missing_model_produces_model_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -336,7 +366,9 @@ class RuntimeTests(unittest.TestCase):
             )
 
             with mock.patch.object(detector_service, "MODELS_DIR", Path(tmpdir)):
-                service = detector_service.RuntimeDetectorService(profile_name="test_profile")
+                service = detector_service.RuntimeDetectorService(
+                    profile_name="test_profile"
+                )
                 detection = service.inspection.update(
                     [],
                     (20, 20, 3),
@@ -354,8 +386,16 @@ class RuntimeTests(unittest.TestCase):
 
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(tmpdir)),
-                mock.patch.object(detector_service, "InferenceEngine", lambda path, model_format="auto": object()),
-                mock.patch.object(detector_service.Picamera2CameraManager, "is_available", return_value=True),
+                mock.patch.object(
+                    detector_service,
+                    "InferenceEngine",
+                    lambda path, model_format="auto": object(),
+                ),
+                mock.patch.object(
+                    detector_service.Picamera2CameraManager,
+                    "is_available",
+                    return_value=True,
+                ),
             ):
                 explicit_camera = detector_service.RuntimeDetectorService(
                     profile_name="test_profile",
@@ -381,7 +421,11 @@ class RuntimeTests(unittest.TestCase):
 
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(tmpdir)),
-                mock.patch.object(detector_service, "InferenceEngine", lambda path, model_format="auto": object()),
+                mock.patch.object(
+                    detector_service,
+                    "InferenceEngine",
+                    lambda path, model_format="auto": object(),
+                ),
             ):
                 service = detector_service.RuntimeDetectorService(
                     profile_name="test_profile",
@@ -393,7 +437,10 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(service.model_format, "ncnn")
 
     def test_invalid_profile_config_raises_readable_error(self):
-        with tempfile.TemporaryDirectory() as models_tmp, tempfile.TemporaryDirectory() as profiles_tmp:
+        with (
+            tempfile.TemporaryDirectory() as models_tmp,
+            tempfile.TemporaryDirectory() as profiles_tmp,
+        ):
             create_profile(Path(models_tmp))
             rules_dir = Path(profiles_tmp) / "test_profile"
             rules_dir.mkdir(parents=True)
@@ -404,11 +451,19 @@ class RuntimeTests(unittest.TestCase):
 
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(models_tmp)),
-                mock.patch.object(detector_service, "PROFILE_CONFIGS_DIR", Path(profiles_tmp)),
-                mock.patch.object(detector_service, "InferenceEngine", lambda path, model_format="auto": object()),
+                mock.patch.object(
+                    detector_service, "PROFILE_CONFIGS_DIR", Path(profiles_tmp)
+                ),
+                mock.patch.object(
+                    detector_service,
+                    "InferenceEngine",
+                    lambda path, model_format="auto": object(),
+                ),
+                self.assertRaisesRegex(
+                    detector_service.ProfileConfigError, "minimum_confidence"
+                ),
             ):
-                with self.assertRaisesRegex(detector_service.ProfileConfigError, "minimum_confidence"):
-                    detector_service.RuntimeDetectorService(profile_name="test_profile")
+                detector_service.RuntimeDetectorService(profile_name="test_profile")
 
     def test_dry_run_starts_without_model_profile(self):
         with (
@@ -421,7 +476,9 @@ class RuntimeTests(unittest.TestCase):
 
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(models_tmp)),
-                mock.patch.object(detector_service, "REVIEW_IMAGES_DIR", Path(review_tmp)),
+                mock.patch.object(
+                    detector_service, "REVIEW_IMAGES_DIR", Path(review_tmp)
+                ),
             ):
                 service = detector_service.RuntimeDetectorService(
                     profile_name="missing_profile",
@@ -451,7 +508,11 @@ class RuntimeTests(unittest.TestCase):
             create_profile(Path(tmpdir))
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(tmpdir)),
-                mock.patch.object(detector_service, "InferenceEngine", lambda path, model_format="auto": object()),
+                mock.patch.object(
+                    detector_service,
+                    "InferenceEngine",
+                    lambda path, model_format="auto": object(),
+                ),
             ):
                 service = detector_service.RuntimeDetectorService(
                     profile_name="test_profile",
@@ -472,13 +533,15 @@ class RuntimeTests(unittest.TestCase):
                 self.assertFalse(latest["stable_detected"])
 
     def test_status_payload_shape_in_dry_run(self):
-        with tempfile.TemporaryDirectory() as models_tmp:
-            with mock.patch.object(detector_service, "MODELS_DIR", Path(models_tmp)):
-                service = detector_service.RuntimeDetectorService(
-                    profile_name="missing_profile",
-                    dry_run=True,
-                )
-                status = service.get_status()
+        with (
+            tempfile.TemporaryDirectory() as models_tmp,
+            mock.patch.object(detector_service, "MODELS_DIR", Path(models_tmp)),
+        ):
+            service = detector_service.RuntimeDetectorService(
+                profile_name="missing_profile",
+                dry_run=True,
+            )
+            status = service.get_status()
 
         for key in (
             "camera_status",
@@ -519,10 +582,7 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             profile_path = Path(tmpdir) / "camera.yaml"
             profile_path.write_text(
-                "name: test_camera\n"
-                "backend: cv2\n"
-                "width: 320\n"
-                "height: 240\n",
+                "name: test_camera\nbackend: cv2\nwidth: 320\nheight: 240\n",
                 encoding="utf-8",
             )
 
@@ -599,14 +659,15 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(sidecar["dry_run"])
             self.assertIn("image_quality", sidecar)
 
-            manifest_lines = manifest_path.read_text(encoding="utf-8").strip().splitlines()
+            manifest_lines = (
+                manifest_path.read_text(encoding="utf-8").strip().splitlines()
+            )
             self.assertEqual(len(manifest_lines), 2)
 
     def test_capture_dataset_label_validation(self):
         parser = capture_dataset_images.create_parser()
-        with redirect_stderr(StringIO()):
-            with self.assertRaises(SystemExit):
-                parser.parse_args(["--label", "unknown", "--session", "bad"])
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(["--label", "unknown", "--session", "bad"])
 
     def test_capture_dataset_invalid_camera_profile_error(self):
         args = capture_dataset_images.create_parser().parse_args(
@@ -620,9 +681,11 @@ class RuntimeTests(unittest.TestCase):
                 "--dry-run",
             ]
         )
-        with self.assertRaisesRegex(CameraProfileError, "Camera profile not found"):
-            with redirect_stdout(StringIO()):
-                capture_dataset_images.run_capture(args)
+        with (
+            self.assertRaisesRegex(CameraProfileError, "Camera profile not found"),
+            redirect_stdout(StringIO()),
+        ):
+            capture_dataset_images.run_capture(args)
 
     def test_capture_dataset_metadata_sidecar_creation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -662,7 +725,9 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("quality_status", sidecar["image_quality"])
 
     def test_label_images_default_label_dir_is_session_labels(self):
-        image_dir = Path("/tmp/collections/yellow_daifuku/pi_camera3/session_a/positive")
+        image_dir = Path(
+            "/tmp/collections/yellow_daifuku/pi_camera3/session_a/positive"
+        )
         label_dir = label_images.resolve_label_dir(image_dir)
 
         self.assertEqual(label_dir, (image_dir.parent / "labels").resolve())
@@ -678,7 +743,9 @@ class RuntimeTests(unittest.TestCase):
 
             paths = label_images.find_image_paths(image_dir)
 
-            self.assertEqual([path.name for path in paths], ["a.jpg", "b.jpeg", "c.png"])
+            self.assertEqual(
+                [path.name for path in paths], ["a.jpg", "b.jpeg", "c.png"]
+            )
 
     def test_label_images_skip_labeled_uses_matching_txt_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -710,14 +777,18 @@ class RuntimeTests(unittest.TestCase):
                 ["image_0003.jpg", "image_0013.jpg"],
             )
 
-            self.assertEqual([path.name for path in selected], ["image_0003.jpg", "image_0013.jpg"])
+            self.assertEqual(
+                [path.name for path in selected], ["image_0003.jpg", "image_0013.jpg"]
+            )
             with self.assertRaisesRegex(FileNotFoundError, "not found"):
                 label_images.filter_only_images(image_paths, ["missing.jpg"])
 
     def test_label_images_empty_negative_label_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             label_path = Path(tmpdir) / "image_0001.txt"
-            label_images.save_yolo_label(label_path, [], image_width=100, image_height=80)
+            label_images.save_yolo_label(
+                label_path, [], image_width=100, image_height=80
+            )
 
             self.assertTrue(label_path.exists())
             self.assertEqual(label_path.read_text(encoding="utf-8"), "")
@@ -725,9 +796,13 @@ class RuntimeTests(unittest.TestCase):
     def test_label_images_loads_existing_yolo_boxes_as_class_zero(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             label_path = Path(tmpdir) / "image_0001.txt"
-            label_path.write_text("7 0.500000 0.500000 0.250000 0.500000\n", encoding="utf-8")
+            label_path.write_text(
+                "7 0.500000 0.500000 0.250000 0.500000\n", encoding="utf-8"
+            )
 
-            boxes = label_images.load_yolo_label(label_path, image_width=200, image_height=100)
+            boxes = label_images.load_yolo_label(
+                label_path, image_width=200, image_height=100
+            )
 
             self.assertEqual(boxes, [(0, 75, 25, 125, 75)])
 
@@ -762,13 +837,17 @@ class RuntimeTests(unittest.TestCase):
             image_path = image_dir / "image_0003.jpg"
             write_test_image(image_path, width=200, height=100)
             label_path = label_dir / "image_0003.txt"
-            label_path.write_text("0 0.500000 0.500000 0.250000 0.500000\n", encoding="utf-8")
+            label_path.write_text(
+                "0 0.500000 0.500000 0.250000 0.500000\n", encoding="utf-8"
+            )
 
             selected = label_images.filter_only_images(
                 label_images.find_image_paths(image_dir),
                 ["image_0003.jpg"],
             )
-            loaded_boxes = label_images.load_yolo_label(label_path, image_width=200, image_height=100)
+            loaded_boxes = label_images.load_yolo_label(
+                label_path, image_width=200, image_height=100
+            )
             self.assertEqual([path.name for path in selected], ["image_0003.jpg"])
             self.assertEqual(loaded_boxes, [(0, 75, 25, 125, 75)])
 
@@ -782,7 +861,10 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(rewritten, "0 0.500000 0.500000 1.000000 1.000000")
 
     def test_build_pi_camera_dataset_excludes_holdout_and_prefixes_filenames(self):
-        with tempfile.TemporaryDirectory() as collections_tmp, tempfile.TemporaryDirectory() as datasets_tmp:
+        with (
+            tempfile.TemporaryDirectory() as collections_tmp,
+            tempfile.TemporaryDirectory() as datasets_tmp,
+        ):
             source_root = create_pi_collection_fixture(collections_tmp)
 
             report = build_pi_camera_dataset.build_dataset(
@@ -798,18 +880,28 @@ class RuntimeTests(unittest.TestCase):
 
             self.assertEqual(report["positive_count"], 3)
             self.assertEqual(report["negative_count"], 2)
-            self.assertEqual(report["excluded_holdout_sessions"], [
-                "pi_demo_v1_holdout_positive",
-                "pi_demo_v1_holdout_negative",
-            ])
+            self.assertEqual(
+                report["excluded_holdout_sessions"],
+                [
+                    "pi_demo_v1_holdout_positive",
+                    "pi_demo_v1_holdout_negative",
+                ],
+            )
             self.assertTrue(all("holdout" not in path.name for path in copied_images))
             self.assertEqual(len({path.name for path in copied_images}), 5)
-            self.assertTrue(any(path.name.startswith("pi_demo_v1_pos_a__") for path in copied_images))
+            self.assertTrue(
+                any(
+                    path.name.startswith("pi_demo_v1_pos_a__") for path in copied_images
+                )
+            )
             self.assertTrue((output_dir / "data.yaml").exists())
             self.assertTrue((output_dir / "dataset_report.json").exists())
 
     def test_build_pi_camera_dataset_preserves_empty_negative_labels(self):
-        with tempfile.TemporaryDirectory() as collections_tmp, tempfile.TemporaryDirectory() as datasets_tmp:
+        with (
+            tempfile.TemporaryDirectory() as collections_tmp,
+            tempfile.TemporaryDirectory() as datasets_tmp,
+        ):
             source_root = create_pi_collection_fixture(collections_tmp)
 
             report = build_pi_camera_dataset.build_dataset(
@@ -825,7 +917,9 @@ class RuntimeTests(unittest.TestCase):
             ]
 
             self.assertEqual(len(negative_labels), 2)
-            self.assertTrue(all(path.read_text(encoding="utf-8") == "" for path in negative_labels))
+            self.assertTrue(
+                all(path.read_text(encoding="utf-8") == "" for path in negative_labels)
+            )
 
     def test_build_pi_camera_dataset_split_is_deterministic(self):
         with tempfile.TemporaryDirectory() as collections_tmp:
@@ -851,8 +945,12 @@ class RuntimeTests(unittest.TestCase):
                 [sample.output_image_name for sample in first_val],
                 [sample.output_image_name for sample in second_val],
             )
-            self.assertGreaterEqual(sum(1 for sample in first_val if sample.category == "positive"), 1)
-            self.assertGreaterEqual(sum(1 for sample in first_val if sample.category == "negative"), 1)
+            self.assertGreaterEqual(
+                sum(1 for sample in first_val if sample.category == "positive"), 1
+            )
+            self.assertGreaterEqual(
+                sum(1 for sample in first_val if sample.category == "negative"), 1
+            )
 
     def test_build_pi_camera_dataset_invalid_and_missing_labels_fail(self):
         with tempfile.TemporaryDirectory() as collections_tmp:
@@ -864,19 +962,22 @@ class RuntimeTests(unittest.TestCase):
                 build_pi_camera_dataset.discover_samples(source_root)
 
             bad_label.write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
-            missing_label = source_root / "pi_demo_v1_pos_b" / "labels" / "image_0001.txt"
+            missing_label = (
+                source_root / "pi_demo_v1_pos_b" / "labels" / "image_0001.txt"
+            )
             missing_label.unlink()
 
             with self.assertRaisesRegex(ValueError, "Missing label"):
                 build_pi_camera_dataset.discover_samples(source_root)
 
     def test_build_pi_camera_dataset_does_not_modify_source_files(self):
-        with tempfile.TemporaryDirectory() as collections_tmp, tempfile.TemporaryDirectory() as datasets_tmp:
+        with (
+            tempfile.TemporaryDirectory() as collections_tmp,
+            tempfile.TemporaryDirectory() as datasets_tmp,
+        ):
             source_root = create_pi_collection_fixture(collections_tmp)
             source_files = [
-                path
-                for path in source_root.glob("*/*/*")
-                if path.is_file()
+                path for path in source_root.glob("*/*/*") if path.is_file()
             ]
             before = {
                 path: (path.read_bytes(), path.stat().st_mtime_ns)
@@ -900,14 +1001,26 @@ class RuntimeTests(unittest.TestCase):
         bright = np.full((40, 40, 3), 255, dtype=np.uint8)
         blurry = np.full((40, 40, 3), 120, dtype=np.uint8)
         checker = np.indices((40, 40)).sum(axis=0) % 2
-        good = np.dstack([checker * 255, (1 - checker) * 255, checker * 255]).astype(np.uint8)
+        good = np.dstack([checker * 255, (1 - checker) * 255, checker * 255]).astype(
+            np.uint8
+        )
 
         self.assertEqual(compute_image_quality(dark)["quality_status"], TOO_DARK)
         self.assertEqual(compute_image_quality(bright)["quality_status"], TOO_BRIGHT)
         self.assertEqual(compute_image_quality(blurry)["quality_status"], BLURRY)
         self.assertEqual(compute_image_quality(None)["quality_status"], INVALID_FRAME)
         self.assertEqual(
-            compute_image_quality(good, {"min_brightness": 1, "max_brightness": 254, "min_blur_score": 1, "min_contrast": 1, "max_overexposed_pct": 60, "max_underexposed_pct": 60})["quality_status"],
+            compute_image_quality(
+                good,
+                {
+                    "min_brightness": 1,
+                    "max_brightness": 254,
+                    "min_blur_score": 1,
+                    "min_contrast": 1,
+                    "max_overexposed_pct": 60,
+                    "max_underexposed_pct": 60,
+                },
+            )["quality_status"],
             GOOD,
         )
 
@@ -919,7 +1032,9 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(cropped.shape[:2], (60, 100))
         self.assertTrue(metadata["roi_enabled"])
-        self.assertEqual(metadata["roi_pixels"], {"x1": 50, "y1": 20, "x2": 150, "y2": 80})
+        self.assertEqual(
+            metadata["roi_pixels"], {"x1": 50, "y1": 20, "x2": 150, "y2": 80}
+        )
 
         clamped, clamped_metadata = apply_roi(
             frame,
@@ -927,7 +1042,10 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertGreater(clamped.shape[0], 0)
         self.assertGreater(clamped.shape[1], 0)
-        self.assertEqual(clamped_metadata["roi_normalized"], {"x1": 0.5, "y1": 0.0, "x2": 1.0, "y2": 0.5})
+        self.assertEqual(
+            clamped_metadata["roi_normalized"],
+            {"x1": 0.5, "y1": 0.0, "x2": 1.0, "y2": 0.5},
+        )
 
     def test_preprocessing_metadata_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -957,6 +1075,31 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(metadata["roi_enabled"])
             self.assertEqual(metadata["resized_to"], {"width": 64, "height": 64})
 
+    def test_service_applies_camera_roi_once_before_inspection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "camera.yaml"
+            profile_path.write_text(
+                "name: test_camera\nbackend: opencv\nroi:\n"
+                " enabled: true\n x1: 0.25\n y1: 0.25\n x2: 0.75\n y2: 0.75\n",
+                encoding="utf-8",
+            )
+            service = detector_service.RuntimeDetectorService(
+                profile_name="missing_profile",
+                camera_profile=profile_path,
+                camera_only=True,
+                imgsz=64,
+            )
+            try:
+                processed, metadata, _ = service._prepare_runtime_frame(
+                    np.zeros((100, 100, 3), dtype=np.uint8)
+                )
+            finally:
+                service.event_manager.stop()
+
+        self.assertEqual(processed.shape[:2], (64, 64))
+        self.assertTrue(metadata["roi_applied"])
+        self.assertFalse(service.inspection.roi_enabled)
+
     def test_camera_only_status_does_not_load_inference(self):
         with mock.patch.object(
             detector_service,
@@ -980,15 +1123,19 @@ class RuntimeTests(unittest.TestCase):
 
     def test_health_check_mode_parsing(self):
         parser = health_check.create_parser()
-        laptop_args = parser.parse_args(["--mode", "laptop", "--profile", "yellow_daifuku"])
-        pi_args = parser.parse_args([
-            "--mode",
-            "pi",
-            "--profile",
-            "yellow_daifuku",
-            "--camera-backend",
-            "picamera2",
-        ])
+        laptop_args = parser.parse_args(
+            ["--mode", "laptop", "--profile", "yellow_daifuku"]
+        )
+        pi_args = parser.parse_args(
+            [
+                "--mode",
+                "pi",
+                "--profile",
+                "yellow_daifuku",
+                "--camera-backend",
+                "picamera2",
+            ]
+        )
 
         self.assertEqual(laptop_args.mode, "laptop")
         self.assertEqual(pi_args.mode, "pi")
@@ -1010,7 +1157,9 @@ class RuntimeTests(unittest.TestCase):
             "_import_picamera2",
             side_effect=RuntimeError("Picamera2 is not available"),
         ):
-            camera = Picamera2CameraManager(frame_width=64, frame_height=48, warmup_seconds=0)
+            camera = Picamera2CameraManager(
+                frame_width=64, frame_height=48, warmup_seconds=0
+            )
             self.assertFalse(camera.open())
             self.assertEqual(camera.backend, "picamera2")
             self.assertEqual(camera.status, "Failed")
@@ -1065,7 +1214,9 @@ class RuntimeTests(unittest.TestCase):
                 self.closed = True
 
         FakePicamera2.requests = []
-        with mock.patch.object(Picamera2CameraManager, "_import_picamera2", return_value=FakePicamera2):
+        with mock.patch.object(
+            Picamera2CameraManager, "_import_picamera2", return_value=FakePicamera2
+        ):
             camera = Picamera2CameraManager(
                 frame_width=10,
                 frame_height=8,
@@ -1094,7 +1245,11 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             status_path = Path(tmpdir) / "latest_status.json"
             manager = ActionManager(
-                action_config={"actions_by_result": {"PASS": ["write_latest_status_json", "increment_counter"]}},
+                action_config={
+                    "actions_by_result": {
+                        "PASS": ["write_latest_status_json", "increment_counter"]
+                    }
+                },
                 status_path=status_path,
                 event_cooldown_seconds=0,
             )
@@ -1144,14 +1299,21 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(check.failures, 1)
 
     def test_demo_command_can_start_dry_run_safely(self):
+        import http.client
+        import socket
+
         repo_root = Path(__file__).resolve().parent.parent
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+
         process = subprocess.Popen(
             ["scripts/run_demo.sh"],
             cwd=repo_root,
             env={
                 **dict(os.environ),
                 "VISION_FORCE_DRY_RUN": "1",
-                "VISION_PORT": "8768",
+                "VISION_PORT": str(port),
                 "VISION_CAMERA_SOURCE": "assets/test.jpg",
             },
             text=True,
@@ -1160,18 +1322,27 @@ class RuntimeTests(unittest.TestCase):
         )
         try:
             import json
-            import urllib.request
 
             status = None
             for _ in range(40):
                 try:
-                    with urllib.request.urlopen("http://127.0.0.1:8768/status", timeout=1) as response:
-                        status = json.loads(response.read().decode("utf-8"))
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1", port, timeout=1
+                    )
+                    connection.request("GET", "/status")
+                    response = connection.getresponse()
+                    status = json.loads(response.read().decode("utf-8"))
+                    connection.close()
                     break
                 except Exception:
+                    if process.poll() is not None:
+                        break
                     time.sleep(0.25)
 
-            self.assertIsNotNone(status)
+            if status is None:
+                process.terminate()
+                output, _ = process.communicate(timeout=3)
+                self.fail(f"Demo did not start on port {port}. Output:\n{output}")
             self.assertTrue(status["simulation_mode"])
             self.assertIn("inspection_result", status["latest_detection"])
         finally:
@@ -1185,7 +1356,10 @@ class RuntimeTests(unittest.TestCase):
                 process.stdout.close()
 
     def test_profile_yaml_loads_inspection_rules(self):
-        with tempfile.TemporaryDirectory() as models_tmp, tempfile.TemporaryDirectory() as profiles_tmp:
+        with (
+            tempfile.TemporaryDirectory() as models_tmp,
+            tempfile.TemporaryDirectory() as profiles_tmp,
+        ):
             create_profile(Path(models_tmp))
             rules_dir = Path(profiles_tmp) / "test_profile"
             rules_dir.mkdir(parents=True)
@@ -1201,12 +1375,22 @@ class RuntimeTests(unittest.TestCase):
 
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(models_tmp)),
-                mock.patch.object(detector_service, "PROFILE_CONFIGS_DIR", Path(profiles_tmp)),
-                mock.patch.object(detector_service, "InferenceEngine", lambda path, model_format="auto": object()),
+                mock.patch.object(
+                    detector_service, "PROFILE_CONFIGS_DIR", Path(profiles_tmp)
+                ),
+                mock.patch.object(
+                    detector_service,
+                    "InferenceEngine",
+                    lambda path, model_format="auto": object(),
+                ),
             ):
-                service = detector_service.RuntimeDetectorService(profile_name="test_profile")
+                service = detector_service.RuntimeDetectorService(
+                    profile_name="test_profile"
+                )
 
-            self.assertEqual(service.inspection_rules["acceptable_classes"], ["pass_part"])
+            self.assertEqual(
+                service.inspection_rules["acceptable_classes"], ["pass_part"]
+            )
             self.assertEqual(service.inspection_rules["reject_classes"], ["fail_part"])
             self.assertEqual(service.inspection_rules["minimum_confidence"], 0.8)
             self.assertEqual(service.inspection_rules["detection_required_frames"], 2)
@@ -1215,14 +1399,25 @@ class RuntimeTests(unittest.TestCase):
     def test_review_images_are_saved_and_counted(self):
         frame = np.zeros((60, 80, 3), dtype=np.uint8)
 
-        with tempfile.TemporaryDirectory() as models_tmp, tempfile.TemporaryDirectory() as review_tmp:
+        with (
+            tempfile.TemporaryDirectory() as models_tmp,
+            tempfile.TemporaryDirectory() as review_tmp,
+        ):
             create_profile(Path(models_tmp))
             with (
                 mock.patch.object(detector_service, "MODELS_DIR", Path(models_tmp)),
-                mock.patch.object(detector_service, "REVIEW_IMAGES_DIR", Path(review_tmp)),
-                mock.patch.object(detector_service, "InferenceEngine", lambda path, model_format="auto": object()),
+                mock.patch.object(
+                    detector_service, "REVIEW_IMAGES_DIR", Path(review_tmp)
+                ),
+                mock.patch.object(
+                    detector_service,
+                    "InferenceEngine",
+                    lambda path, model_format="auto": object(),
+                ),
             ):
-                service = detector_service.RuntimeDetectorService(profile_name="test_profile")
+                service = detector_service.RuntimeDetectorService(
+                    profile_name="test_profile"
+                )
 
                 stable_low = {
                     "stable_detected": True,
@@ -1233,7 +1428,9 @@ class RuntimeTests(unittest.TestCase):
                 }
                 result = service._handle_review_images(frame, stable_low)
                 self.assertTrue(result["saved_image_path"])
-                self.assertTrue(Path(result["saved_image_path"]).with_suffix(".json").exists())
+                self.assertTrue(
+                    Path(result["saved_image_path"]).with_suffix(".json").exists()
+                )
 
                 no_detection = {
                     "stable_detected": False,

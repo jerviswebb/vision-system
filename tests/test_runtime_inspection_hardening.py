@@ -9,9 +9,16 @@ from unittest import mock
 import numpy as np
 
 import app.runtime.detector_service as detector_service
+from app.runtime.action_manager import ActionManager
 from app.runtime.event_manager import DuplicateSuppressor, EventManager, EventSeverity
 from app.runtime.health_monitor import DEGRADED, HEALTHY, UNHEALTHY, HealthMonitor
-from app.runtime.image_quality import BLURRY, INVALID_FRAME, TOO_BRIGHT, TOO_DARK, compute_image_quality
+from app.runtime.image_quality import (
+    BLURRY,
+    INVALID_FRAME,
+    TOO_BRIGHT,
+    TOO_DARK,
+    compute_image_quality,
+)
 from app.runtime.inspection_logic import InspectionLogic
 from app.runtime.inspection_result import (
     InspectionState,
@@ -20,7 +27,6 @@ from app.runtime.inspection_result import (
     generate_inspection_id,
 )
 from app.runtime.notification_manager import NotificationManager
-from app.runtime.action_manager import ActionManager
 
 
 class RuntimeInspectionHardeningTests(unittest.TestCase):
@@ -32,7 +38,13 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
             miss_required_frames=1,
         )
         snapshot = logic.update(
-            [{"class_name": "yellow daifuku", "confidence": 0.91, "bbox": [1, 1, 10, 10]}],
+            [
+                {
+                    "class_name": "yellow daifuku",
+                    "confidence": 0.91,
+                    "bbox": [1, 1, 10, 10],
+                }
+            ],
             (20, 20, 3),
         )
         self.assertEqual(snapshot["inspection_result"], "PASS")
@@ -54,14 +66,61 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
         self.assertEqual(snapshot["inspection_state"], "REVIEW")
 
     def test_system_errors_map_to_system_error(self):
-        self.assertEqual(canonical_state_from_result("CAMERA_ERROR"), InspectionState.SYSTEM_ERROR)
-        self.assertEqual(canonical_state_from_result("MODEL_ERROR"), InspectionState.SYSTEM_ERROR)
+        self.assertEqual(
+            canonical_state_from_result("CAMERA_ERROR"), InspectionState.SYSTEM_ERROR
+        )
+        self.assertEqual(
+            canonical_state_from_result("MODEL_ERROR"), InspectionState.SYSTEM_ERROR
+        )
 
     def test_unique_inspection_ids(self):
         first = generate_inspection_id()
         second = generate_inspection_id()
         self.assertNotEqual(first, second)
         self.assertTrue(first.startswith("INS-"))
+
+    def test_inspection_id_is_stable_until_semantic_result_changes(self):
+        logic = InspectionLogic(
+            acceptable_classes=["part"],
+            detection_required_frames=1,
+            miss_required_frames=1,
+        )
+        shape = (20, 20, 3)
+        first = logic.update(
+            [{"class_name": "part", "confidence": 0.90, "bbox": [1, 1, 10, 10]}], shape
+        )
+        second = logic.update(
+            [{"class_name": "part", "confidence": 0.91, "bbox": [1, 1, 10, 10]}], shape
+        )
+        no_part = logic.update([], shape)
+        third = logic.update(
+            [{"class_name": "part", "confidence": 0.92, "bbox": [1, 1, 10, 10]}], shape
+        )
+
+        self.assertEqual(first["inspection_id"], second["inspection_id"])
+        self.assertNotEqual(second["inspection_id"], no_part["inspection_id"])
+        self.assertNotEqual(no_part["inspection_id"], third["inspection_id"])
+
+    def test_system_error_is_unhealthy(self):
+        logic = InspectionLogic(["part"])
+        logic.update(
+            [{"class_name": "part", "confidence": 0.91, "bbox": [1, 1, 10, 10]}],
+            (20, 20, 3),
+        )
+        snapshot = logic.system_error("inference exploded")
+        repeated = logic.system_error("inference exploded again")
+        monitor = HealthMonitor(last_system_error=snapshot["result_message"])
+        health = monitor.snapshot(
+            camera_connected=True,
+            model_loaded=True,
+            latest_frame_time=time.perf_counter(),
+            data_path=Path.cwd(),
+        )
+        self.assertEqual(snapshot["inspection_state"], "SYSTEM_ERROR")
+        self.assertIsNone(snapshot["class_name"])
+        self.assertIsNone(snapshot["confidence"])
+        self.assertEqual(snapshot["inspection_id"], repeated["inspection_id"])
+        self.assertEqual(health["status"], UNHEALTHY)
 
     def test_decision_serializes_timezone_aware_timestamp(self):
         decision = build_decision(
@@ -103,9 +162,15 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
             miss_required_frames=1,
         )
         shape = (20, 20, 3)
-        logic.update([{"class_name": "good", "confidence": 0.9, "bbox": [1, 1, 10, 10]}], shape)
-        logic.update([{"class_name": "bad", "confidence": 0.9, "bbox": [1, 1, 10, 10]}], shape)
-        logic.update([{"class_name": "good", "confidence": 0.9, "bbox": [1, 1, 10, 10]}], shape)
+        logic.update(
+            [{"class_name": "good", "confidence": 0.9, "bbox": [1, 1, 10, 10]}], shape
+        )
+        logic.update(
+            [{"class_name": "bad", "confidence": 0.9, "bbox": [1, 1, 10, 10]}], shape
+        )
+        logic.update(
+            [{"class_name": "good", "confidence": 0.9, "bbox": [1, 1, 10, 10]}], shape
+        )
         snapshot = logic.update(
             [{"class_name": "bad", "confidence": 0.9, "bbox": [1, 1, 10, 10]}],
             shape,
@@ -120,7 +185,9 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
         self.assertEqual(compute_image_quality(None)["quality_status"], INVALID_FRAME)
         self.assertEqual(compute_image_quality(dark)["quality_status"], TOO_DARK)
         self.assertEqual(compute_image_quality(bright)["quality_status"], TOO_BRIGHT)
-        self.assertIn(compute_image_quality(flat)["quality_status"], {BLURRY, "LOW_CONTRAST"})
+        self.assertIn(
+            compute_image_quality(flat)["quality_status"], {BLURRY, "LOW_CONTRAST"}
+        )
 
     def test_event_persistence_jsonl(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -168,7 +235,9 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
             reason="Failed.",
             profile="yellow_daifuku",
         )
-        result = manager.notify(type("Event", (), {"to_dict": lambda self: event.to_dict()})())
+        result = manager.notify(
+            type("Event", (), {"to_dict": lambda self: event.to_dict()})()
+        )
         self.assertFalse(result["sent"])
         self.assertEqual(result["reason"], "notifications_disabled")
 
@@ -183,6 +252,19 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
                 }
             )
         self.assertEqual(result["counters"]["simulation"], 1)
+
+    def test_action_counter_increments_once_per_inspection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ActionManager(status_path=Path(tmpdir) / "latest_status.json")
+            status = {
+                "inspection_id": "INS-1",
+                "inspection_result": "PASS",
+                "message": "Accepted.",
+            }
+            manager.handle(status)
+            manager.handle({**status, "confidence": 0.92})
+            result = manager.handle({**status, "inspection_id": "INS-2"})
+        self.assertEqual(result["counters"]["pass"], 2)
 
     def test_missing_notification_credentials_do_not_crash(self):
         manager = NotificationManager(enabled=True)
@@ -232,8 +314,12 @@ class RuntimeInspectionHardeningTests(unittest.TestCase):
 
     def test_disk_free_pct_uses_percent_units(self):
         usage = shutil._ntuple_diskusage(total=200, used=198, free=2)
-        with mock.patch("app.runtime.health_monitor.shutil.disk_usage", return_value=usage):
-            monitor = HealthMonitor(startup_time=time.monotonic(), min_free_disk_pct=5.0)
+        with mock.patch(
+            "app.runtime.health_monitor.shutil.disk_usage", return_value=usage
+        ):
+            monitor = HealthMonitor(
+                startup_time=time.monotonic(), min_free_disk_pct=5.0
+            )
             snapshot = monitor.snapshot(
                 camera_connected=True,
                 model_loaded=True,

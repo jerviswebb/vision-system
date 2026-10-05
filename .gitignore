@@ -51,12 +51,16 @@ build/
 .env.*.local
 
 # Certificates
+*.crt
+*.cer
+*.der
 *.pem
 *.csr
 *.p12
 *.pfx
 *.key
-!ansible/certs/example/*
+*.jks
+*.keystore
 
 # Ansible
 ansible/secrets.yaml
