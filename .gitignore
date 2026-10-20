@@ -110,3 +110,13 @@ sandbox/
 *.iso
 *.iso.xz
 *.iso.gz
+
+#certificates
+*.crtsour
+
+#images
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.txt
