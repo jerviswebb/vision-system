@@ -1,0 +1,19 @@
+profile_name: weld_public 
+
+
+inspection:
+   acceptable_classes:
+     - "Good Weld"
+   reject_classes:
+     - "Bad Weld"
+     - "Defect"
+   minimum_confidence: 0.25
+   required_consecutive_detections: 1
+   allowed_no_detection_frames: 3
+   allow_simulation: true
+   roi: 
+      enabled: false
+      x1: 0.0
+      y1: 0.0
+      x2: 0.0
+      y2: 0.0
