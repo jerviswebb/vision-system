@@ -1,0 +1,6 @@
+{
+  "profile_name": "weld_public",
+  "model_file": "best.pt",
+  "target_classes": ["Bad Weld", "Good Weld", "Defect"],
+  "confidence": 0.25
+}

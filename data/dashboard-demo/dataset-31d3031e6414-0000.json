@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "eventId": "dataset-31d3031e6414-0000",
+  "inspectionId": "dataset-31d3031e6414-0000",
+  "state": "FAIL",
+  "result": "FAIL",
+  "passFail": false,
+  "className": "Bad Weld",
+  "confidence": 0.6829996705055237,
+  "message": "Dataset demo: 00e5cc7eb18c1c06faeb028fed8b3051_1743.jpg; detections=[('Bad Weld', 0.6829996705055237), ('Defect', 0.355993390083313)]",
+  "profile": "weld_public",
+  "healthStatus": "HEALTHY",
+  "runtimeMode": "DATASET_DEMO",
+  "observedAt": "2026-10-20T13:32:18.009748+00:00"
+}
