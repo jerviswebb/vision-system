@@ -13,3 +13,4 @@ torchvision
 PyYAML
 pyserial
 Flask
+openpyxl
